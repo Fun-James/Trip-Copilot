@@ -3,4 +3,7 @@ uvicorn[standard]==0.34.3
 python-multipart==0.0.20
 pydantic==2.11.7
 rich>=10.7
+dashscope>=1.14.0
+langchain-community>=0.0.20
+python-dotenv>=1.0.0
 

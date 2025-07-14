@@ -1,0 +1,6 @@
+@echo off
+echo Starting Trip Copilot Backend...
+start cmd /k "cd backend && python main.py"
+
+echo Starting Trip Copilot Frontend...
+start cmd /k "cd frontend && npm run dev"
