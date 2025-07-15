@@ -64,21 +64,6 @@ const initMap = () => {
     return
   }
 
-  // 检查API密钥是否已配置
-  const apiSecret = import.meta.env.VITE_AMAP_SECRET
-  
-  // 如果配置了安全密钥，设置安全验证
-  if (apiSecret && apiSecret !== 'YOUR_AMAP_SECRET_HERE') {
-    try {
-      window._AMapSecurityConfig = {
-        securityJsCode: apiSecret,
-      }
-      console.log('高德地图安全密钥已配置')
-    } catch (error) {
-      console.warn('安全密钥配置失败:', error)
-    }
-  }
-
   try {
     // 创建地图实例
     map.value = new AMap.Map('amap-container', {
@@ -439,20 +424,6 @@ const reinitializeMap = () => {
     // 重新创建地图实例
     setTimeout(() => {
       try {
-        // 检查API密钥是否已配置
-        const apiSecret = import.meta.env.VITE_AMAP_SECRET
-        
-        // 如果配置了安全密钥，设置安全验证
-        if (apiSecret && apiSecret !== 'YOUR_AMAP_SECRET_HERE') {
-          try {
-            window._AMapSecurityConfig = {
-              securityJsCode: apiSecret,
-            }
-          } catch (error) {
-            console.warn('安全密钥配置失败:', error)
-          }
-        }
-        
         // 创建新的地图实例
         map.value = new AMap.Map('amap-container', {
           zoom: 12,
@@ -1252,54 +1223,29 @@ const drawDayRoute = async (places) => {
   console.log('开始绘制当天路线，地点数据:', places)
   
   try {
-    // 加载驾车路线规划插件
-    AMap.plugin('AMap.Driving', () => {
-      console.log('AMap.Driving 插件加载成功')
-      
-      const driving = new AMap.Driving({
-        map: map.value,
-        hideMarkers: true, // 隐藏默认标记，使用自定义标记
-        showTraffic: false,
-        policy: AMap.DrivingPolicy.LEAST_TIME
-      })
-      
-      // 构建路径点
-      const waypoints = places.map(place => [place.longitude, place.latitude])
-      const start = waypoints[0]
-      const end = waypoints[waypoints.length - 1]
-      const viaPoints = waypoints.slice(1, -1)
-      
-      console.log('路线规划参数:', {
-        start,
-        end,
-        viaPoints,
-        totalWaypoints: waypoints.length
-      })
-      
-      // 执行路线搜索
-      driving.search(start, end, {
-        waypoints: viaPoints
-      }, (status, result) => {
-        console.log('路线规划结果:', { status, result })
-        
-        if (status === 'complete' && result.routes && result.routes.length > 0) {
-          console.log(`当天路线规划完成，共${result.routes[0].steps.length}个步骤`)
-          console.log('路线详情:', result.routes[0])
-        } else {
-          console.warn('当天路线规划失败:', { status, result })
-          
-          // 详细分析失败原因
-          if (result && result.info) {
-            console.error('路线规划错误信息:', result.info)
-          }
-          
-          // 如果是API密钥相关错误，给出具体提示
-          if (status === 'error' || (result && result.info && result.info.includes('INVALID'))) {
-            console.error('可能的API密钥问题，请检查高德地图API配置')
-          }
-        }
-      })
+    // 构建路径点
+    const waypoints = places.map(place => [place.longitude, place.latitude])
+    
+    // 直接使用坐标绘制简单连线（避免调用高德路径规划API）
+    const polyline = new AMap.Polyline({
+      path: waypoints,
+      strokeColor: '#1890ff',
+      strokeWeight: 4,
+      strokeOpacity: 0.8,
+      strokeStyle: 'solid',
+      lineJoin: 'round',
+      lineCap: 'round'
     })
+    
+    // 清除之前的路线
+    clearRoute()
+    
+    // 添加到地图
+    map.value.add(polyline)
+    routePolyline.value = polyline
+    
+    console.log('当天路线绘制完成，使用直线连接')
+    
   } catch (error) {
     console.error('绘制当天路线失败:', error)
     console.error('错误详情:', {
