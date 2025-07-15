@@ -120,9 +120,91 @@
               地图导览
             </h3>
             <div class="map-controls">
+              <el-tooltip content="路径规划" placement="top">
+                <el-button size="small" :icon="Guide" @click="showRoutePanel = !showRoutePanel" circle />
+              </el-tooltip>
               <el-tooltip content="刷新地图" placement="top">
                 <el-button size="small" :icon="Refresh" @click="refreshMap" circle />
               </el-tooltip>
+            </div>
+          </div>
+          
+          <!-- 路径规划面板 -->
+          <div v-if="showRoutePanel" class="route-panel">
+            <div class="route-form">
+              <div class="route-inputs">
+                <el-input
+                  v-model="routeForm.start"
+                  placeholder="请输入起点"
+                  size="small"
+                  clearable
+                >
+                  <template #prefix>
+                    <el-icon><LocationFilled /></el-icon>
+                  </template>
+                </el-input>
+                
+                <el-input
+                  v-model="routeForm.end"
+                  placeholder="请输入终点"
+                  size="small"
+                  clearable
+                  style="margin-top: 8px;"
+                >
+                  <template #prefix>
+                    <el-icon><Location /></el-icon>
+                  </template>
+                </el-input>
+              </div>
+              
+              <div class="route-mode">
+                <el-radio-group v-model="routeForm.mode" size="small">
+                  <el-radio-button value="driving">驾车</el-radio-button>
+                  <el-radio-button value="walking">步行</el-radio-button>
+                  <el-radio-button value="transit">公交</el-radio-button>
+                </el-radio-group>
+              </div>
+              
+              <div class="route-actions">
+                <el-button 
+                  type="primary" 
+                  size="small" 
+                  @click="planRoute"
+                  :loading="routeLoading"
+                  style="width: 100%; margin-bottom: 8px;"
+                >
+                  规划路线
+                </el-button>
+                
+                <el-button 
+                  v-if="currentRoute"
+                  type="danger" 
+                  size="small" 
+                  @click="clearRoute"
+                  plain
+                  style="width: 100%;"
+                >
+                  清除路线
+                </el-button>
+              </div>
+            </div>
+            
+            <!-- 路径信息显示 -->
+            <div v-if="routeInfo" class="route-info">
+              <div class="route-summary">
+                <div class="summary-item">
+                  <span class="label">距离:</span>
+                  <span class="value">{{ formatDistance(routeInfo.distance) }}</span>
+                </div>
+                <div class="summary-item">
+                  <span class="label">时间:</span>
+                  <span class="value">{{ formatDuration(routeInfo.duration) }}</span>
+                </div>
+                <div class="summary-item">
+                  <span class="label">方式:</span>
+                  <span class="value">{{ getModeText(routeInfo.mode) }}</span>
+                </div>
+              </div>
             </div>
           </div>
           
@@ -130,6 +212,7 @@
             <MapDisplay 
               :itinerary-data="currentItinerary" 
               :center-location="mapCenter"
+              :route-data="currentRoute"
               ref="mapDisplayRef"
             />
           </div>
@@ -141,7 +224,8 @@
 
 <script>
 import { ref, nextTick } from 'vue'
-import { Search, Menu, Edit, Document, MapLocation, Location, ChatLineRound, Star, Refresh, CloseBold } from '@element-plus/icons-vue'
+import { Search, Menu, Edit, Document, MapLocation, Location, ChatLineRound, Star, Refresh, CloseBold, Guide, LocationFilled } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import axios from 'axios'
 import MapDisplay from '@/components/MapDisplay.vue'
 
@@ -158,6 +242,8 @@ export default {
     Star,
     Refresh,
     CloseBold,
+    Guide,
+    LocationFilled,
     MapDisplay
   },
   setup() {
@@ -173,6 +259,17 @@ export default {
     // 地图相关数据
     const currentItinerary = ref([])
     const mapCenter = ref({ lng: 116.397428, lat: 39.90923 }) // 默认北京
+    
+    // 路径规划相关数据
+    const showRoutePanel = ref(false)
+    const routeForm = ref({
+      start: '',
+      end: '',
+      mode: 'driving'
+    })
+    const routeLoading = ref(false)
+    const currentRoute = ref(null)
+    const routeInfo = ref(null)
 
     // 初始化时加载历史对话
     const loadChatHistory = () => {
@@ -423,6 +520,123 @@ export default {
       }
     }
 
+    // 路径规划相关函数
+    
+    /**
+     * 规划路线
+     */
+    const planRoute = async () => {
+      if (!routeForm.value.start.trim() || !routeForm.value.end.trim()) {
+        ElMessage.warning('请输入起点和终点')
+        return
+      }
+
+      routeLoading.value = true
+      
+      try {
+        const response = await axios.post('http://localhost:8000/api/trip/path', {
+          start: routeForm.value.start,
+          end: routeForm.value.end,
+          mode: routeForm.value.mode
+        })
+
+        if (response.data.success) {
+          const pathData = response.data.path_data
+          console.log('收到路径数据:', pathData)
+          currentRoute.value = pathData
+          
+          // 更新路径信息
+          const routeData = pathData.route_info
+          if (routeData && routeData.paths && routeData.paths.length > 0) {
+            const path = routeData.paths[0]
+            routeInfo.value = {
+              distance: path.distance,
+              duration: path.duration,
+              mode: pathData.mode
+            }
+            console.log('路径信息更新:', routeInfo.value)
+          }
+          
+          // 更新地图中心到起点
+          mapCenter.value = {
+            lng: pathData.start_point.longitude,
+            lat: pathData.start_point.latitude
+          }
+          
+          console.log('地图中心更新:', mapCenter.value)
+          
+          // 添加路径规划消息到聊天
+          const routeMessage = `路径规划完成：\n从 ${pathData.start_point.name} 到 ${pathData.end_point.name}\n` +
+            `距离：${formatDistance(routeInfo.value.distance)}\n` +
+            `预计时间：${formatDuration(routeInfo.value.duration)}\n` +
+            `出行方式：${getModeText(routeInfo.value.mode)}`
+          
+          addMessage(routeMessage, 'assistant')
+          
+          ElMessage.success('路径规划成功')
+        } else {
+          console.error('路径规划失败:', response.data.error_message)
+          ElMessage.error(response.data.error_message || '路径规划失败')
+        }
+      } catch (error) {
+        console.error('路径规划失败:', error)
+        ElMessage.error('路径规划失败，请检查网络连接')
+      } finally {
+        routeLoading.value = false
+      }
+    }
+
+    /**
+     * 格式化距离
+     */
+    const formatDistance = (distance) => {
+      if (!distance) return '未知'
+      const dist = parseInt(distance)
+      if (dist >= 1000) {
+        return (dist / 1000).toFixed(1) + ' 公里'
+      }
+      return dist + ' 米'
+    }
+
+    /**
+     * 格式化时长
+     */
+    const formatDuration = (duration) => {
+      if (!duration) return '未知'
+      const dur = parseInt(duration)
+      const hours = Math.floor(dur / 3600)
+      const minutes = Math.floor((dur % 3600) / 60)
+      
+      if (hours > 0) {
+        return `${hours}小时${minutes}分钟`
+      }
+      return `${minutes}分钟`
+    }
+
+    /**
+     * 获取出行方式文本
+     */
+    const getModeText = (mode) => {
+      const modeMap = {
+        'driving': '驾车',
+        'walking': '步行',
+        'transit': '公交'
+      }
+      return modeMap[mode] || mode
+    }
+
+    /**
+     * 清除路径
+     */
+    const clearRoute = () => {
+      currentRoute.value = null
+      routeInfo.value = null
+      routeForm.value.start = ''
+      routeForm.value.end = ''
+      addMessage('已清除路径规划', 'assistant')
+      ElMessage.success('路径已清除')
+    }
+
     // 处理搜索
     const handleSearch = async () => {
       if (!searchQuery.value.trim()) return
@@ -477,6 +691,18 @@ export default {
       mapDisplayRef,
       currentItinerary,
       mapCenter,
+      // 路径规划相关
+      showRoutePanel,
+      routeForm,
+      routeLoading,
+      currentRoute,
+      routeInfo,
+      planRoute,
+      formatDistance,
+      formatDuration,
+      getModeText,
+      clearRoute,
+      // 功能函数
       handleSearch,
       formatTime,
       formatDate,
@@ -485,8 +711,19 @@ export default {
       loadChat,
       deleteChat,
       refreshMap,
+      // 图标组件
       Search,
-      Refresh
+      Menu,
+      Edit,
+      Document,
+      MapLocation,
+      Location,
+      ChatLineRound,
+      Star,
+      Refresh,
+      CloseBold,
+      Guide,
+      LocationFilled
     }
   }
 }
@@ -962,6 +1199,70 @@ export default {
 
 .messages-container::-webkit-scrollbar-thumb:hover {
   background: #bdc1c6;
+}
+
+/* 路径规划面板 */
+.route-panel {
+  border-bottom: 1px solid #e8eaed;
+  background-color: #f8f9fa;
+}
+
+.route-form {
+  padding: 12px 15px;
+}
+
+.route-inputs {
+  margin-bottom: 12px;
+}
+
+.route-mode {
+  margin-bottom: 12px;
+}
+
+.route-mode :deep(.el-radio-group) {
+  width: 100%;
+}
+
+.route-mode :deep(.el-radio-button__inner) {
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.route-actions {
+  margin-bottom: 8px;
+}
+
+.route-info {
+  padding: 0 15px 12px;
+}
+
+.route-summary {
+  background: #ffffff;
+  border-radius: 6px;
+  padding: 10px;
+  border: 1px solid #e8eaed;
+}
+
+.summary-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.summary-item .label {
+  color: #5f6368;
+  font-weight: 500;
+}
+
+.summary-item .value {
+  color: #202124;
+  font-weight: 600;
+}
+
+.summary-item:not(:last-child) {
+  border-bottom: 1px solid #f1f3f4;
 }
 
 /* 响应式设计 */

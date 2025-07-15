@@ -7,6 +7,7 @@ import os
 from dotenv import load_dotenv
 from langchain_community.chat_models.tongyi import ChatTongyi
 from langchain_core.messages import HumanMessage, SystemMessage
+import requests
 
 # 加载环境变量
 load_dotenv()
@@ -50,6 +51,24 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
     success: bool = True
+
+class PathRequest(BaseModel):
+    start: str
+    end: str
+    mode: Optional[str] = "driving"  # driving, walking, transit
+
+class PathResponse(BaseModel):
+    success: bool
+    path_data: Optional[dict] = None
+    error_message: Optional[str] = None
+
+class LocationRequest(BaseModel):
+    location: str
+
+class LocationResponse(BaseModel):
+    success: bool
+    location_data: Optional[dict] = None
+    error_message: Optional[str] = None
 
 # 根路径
 @app.get("/")
@@ -205,6 +224,127 @@ async def get_popular_destinations():
             ]
         }
 
+# 获取高德地图API密钥
+def get_amap_api_key():
+    api_key = os.getenv("AMAP_API_KEY")
+    if not api_key:
+        raise ValueError("AMAP_API_KEY not found in environment variables")
+    return api_key
+
+# 获取地点坐标
+def get_location_coordinates(location: str):
+    """通过地点名称获取经纬度坐标"""
+    try:
+        api_key = get_amap_api_key()
+        url = f"https://restapi.amap.com/v3/geocode/geo"
+        params = {
+            "key": api_key,
+            "address": location
+        }
+        response = requests.get(url, params=params)
+        data = response.json()
+        
+        if data["status"] == "1" and data["geocodes"]:
+            location_str = data["geocodes"][0]["location"]
+            longitude, latitude = location_str.split(",")
+            return longitude, latitude
+        else:
+            return None, None
+    except Exception as e:
+        print(f"获取坐标失败: {e}")
+        return None, None
+
+# 获取路径规划
+def get_route_planning(start_coords: tuple, end_coords: tuple, mode: str = "driving"):
+    """获取两点间的路径规划"""
+    try:
+        api_key = get_amap_api_key()
+        origin = f"{start_coords[0]},{start_coords[1]}"
+        destination = f"{end_coords[0]},{end_coords[1]}"
+        
+        url = f"https://restapi.amap.com/v3/direction/{mode}"
+        params = {
+            "key": api_key,
+            "origin": origin,
+            "destination": destination
+        }
+        
+        response = requests.get(url, params=params)
+        data = response.json()
+        
+        return data
+    except Exception as e:
+        print(f"获取路径规划失败: {e}")
+        return None
+
+# 路径规划API
+@app.post("/api/trip/path", response_model=PathResponse)
+async def get_trip_path(request: PathRequest):
+    """获取起点到终点的路径规划"""
+    try:
+        # 获取起点坐标
+        start_lng, start_lat = get_location_coordinates(request.start)
+        if not start_lng or not start_lat:
+            return PathResponse(
+                success=False,
+                error_message=f"无法获取起点'{request.start}'的坐标信息"
+            )
+        
+        # 获取终点坐标
+        end_lng, end_lat = get_location_coordinates(request.end)
+        if not end_lng or not end_lat:
+            return PathResponse(
+                success=False,
+                error_message=f"无法获取终点'{request.end}'的坐标信息"
+            )
+        
+        # 获取路径规划
+        mode = request.mode or "driving"  # 如果mode为None，默认使用driving
+        route_data = get_route_planning(
+            (start_lng, start_lat), 
+            (end_lng, end_lat), 
+            mode
+        )
+        
+        if not route_data or route_data.get("status") != "1":
+            return PathResponse(
+                success=False,
+                error_message="获取路径规划失败，请检查起点和终点是否正确"
+            )
+        
+        # 处理返回数据，提取关键信息
+        processed_data = {
+            "start_point": {
+                "name": request.start,
+                "longitude": float(start_lng),
+                "latitude": float(start_lat)
+            },
+            "end_point": {
+                "name": request.end,
+                "longitude": float(end_lng),
+                "latitude": float(end_lat)
+            },
+            "mode": mode,
+            "route_info": route_data.get("route", {}),
+            "raw_data": route_data  # 完整的原始数据，供前端使用
+        }
+        
+        return PathResponse(
+            success=True,
+            path_data=processed_data
+        )
+        
+    except ValueError as ve:
+        return PathResponse(
+            success=False,
+            error_message=str(ve)
+        )
+    except Exception as e:
+        return PathResponse(
+            success=False,
+            error_message=f"服务器内部错误: {str(e)}"
+        )
+
 # 聊天API
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_with_ai(request: ChatRequest):
@@ -250,6 +390,56 @@ async def chat_with_ai(request: ChatRequest):
         return ChatResponse(
             reply=f"抱歉，我遇到了一些技术问题。请稍后再试。错误信息：{str(e)}", 
             success=False
+        )
+
+# 获取地点详细信息API
+@app.post("/api/location/info", response_model=LocationResponse)
+async def get_location_info(request: LocationRequest):
+    """获取地点的详细信息和坐标"""
+    try:
+        api_key = get_amap_api_key()
+        url = f"https://restapi.amap.com/v3/geocode/geo"
+        params = {
+            "key": api_key,
+            "address": request.location
+        }
+        
+        response = requests.get(url, params=params)
+        data = response.json()
+        
+        if data["status"] == "1" and data["geocodes"]:
+            geocode = data["geocodes"][0]
+            location_data = {
+                "name": request.location,
+                "formatted_address": geocode.get("formatted_address", ""),
+                "province": geocode.get("province", ""),
+                "city": geocode.get("city", ""),
+                "district": geocode.get("district", ""),
+                "location": geocode.get("location", ""),
+                "longitude": float(geocode.get("location", "0,0").split(",")[0]),
+                "latitude": float(geocode.get("location", "0,0").split(",")[1]),
+                "level": geocode.get("level", "")
+            }
+            
+            return LocationResponse(
+                success=True,
+                location_data=location_data
+            )
+        else:
+            return LocationResponse(
+                success=False,
+                error_message=f"无法找到地点'{request.location}'的信息"
+            )
+            
+    except ValueError as ve:
+        return LocationResponse(
+            success=False,
+            error_message=str(ve)
+        )
+    except Exception as e:
+        return LocationResponse(
+            success=False,
+            error_message=f"服务器内部错误: {str(e)}"
         )
 
 if __name__ == "__main__":
