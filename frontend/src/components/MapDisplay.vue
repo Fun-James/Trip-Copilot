@@ -57,27 +57,16 @@ const routePolyline = ref(null)
  * 创建地图实例并设置基本配置
  */
 const initMap = () => {
+  if (typeof AMap === 'undefined') {
+    console.error('高德地图API未加载')
+    loading.value = false
+    mapInitialized.value = false
+    return
+  }
+
   // 检查API密钥是否已配置
-  const apiKey = import.meta.env.VITE_AMAP_KEY
   const apiSecret = import.meta.env.VITE_AMAP_SECRET
   
-  console.log('API Key:', apiKey) // 调试日志
-  console.log('API Secret:', apiSecret) // 调试日志
-  
-  if (!apiKey || apiKey === 'YOUR_AMAP_KEY_HERE') {
-    console.warn('高德地图API密钥尚未配置，请在.env文件中设置VITE_AMAP_KEY')
-    loading.value = false
-    mapInitialized.value = false
-    return
-  }
-
-  if (typeof AMap === 'undefined') {
-    console.error('高德地图API未加载，请检查API密钥配置')
-    loading.value = false
-    mapInitialized.value = false
-    return
-  }
-
   // 如果配置了安全密钥，设置安全验证
   if (apiSecret && apiSecret !== 'YOUR_AMAP_SECRET_HERE') {
     try {
@@ -927,9 +916,19 @@ watch(() => props.routeData, async (newRouteData, oldRouteData) => {
 
 // 组件挂载时初始化地图
 onMounted(() => {
-  nextTick(() => {
-    // 确保DOM元素已渲染再初始化地图
-    setTimeout(initMap, 100)
+  nextTick(async () => {
+    try {
+      // 动态加载高德地图API
+      if (window.loadAmapScript) {
+        await window.loadAmapScript()
+      }
+      // 确保DOM元素已渲染再初始化地图
+      setTimeout(initMap, 100)
+    } catch (error) {
+      console.error('高德地图API加载失败:', error)
+      loading.value = false
+      mapInitialized.value = false
+    }
   })
 })
 </script>
