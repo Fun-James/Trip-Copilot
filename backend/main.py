@@ -4,6 +4,7 @@ from pydantic import BaseModel, SecretStr
 from typing import Optional, List
 import uvicorn
 import os
+import time
 from dotenv import load_dotenv
 from langchain_community.chat_models.tongyi import ChatTongyi
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -37,6 +38,16 @@ class TripRequest(BaseModel):
     duration: Optional[int] = None
     budget: Optional[float] = None
     interests: Optional[List[str]] = []
+
+# 新增行程规划数据模型
+class ItineraryPlanRequest(BaseModel):
+    destination: str
+    duration: int  # 天数，必填
+
+class ItineraryPlanResponse(BaseModel):
+    success: bool
+    plan_data: Optional[dict] = None
+    error_message: Optional[str] = None
 
 class TripResponse(BaseModel):
     id: int
@@ -235,6 +246,9 @@ def get_amap_api_key():
 def get_location_coordinates(location: str):
     """通过地点名称获取经纬度坐标"""
     try:
+        # 添加延迟避免QPS限制（免费版3次/秒）
+        time.sleep(0.4)  # 等待400ms
+        
         api_key = get_amap_api_key()
         url = f"https://restapi.amap.com/v3/geocode/geo"
         params = {
@@ -246,7 +260,10 @@ def get_location_coordinates(location: str):
         
         if data["status"] == "1" and data["geocodes"]:
             location_str = data["geocodes"][0]["location"]
-            longitude, latitude = location_str.split(",")
+            longitude_str, latitude_str = location_str.split(",")
+            # 确保返回浮点数类型
+            longitude = float(longitude_str)
+            latitude = float(latitude_str)
             return longitude, latitude
         else:
             return None, None
@@ -258,6 +275,9 @@ def get_location_coordinates(location: str):
 def get_route_planning(start_coords: tuple, end_coords: tuple, mode: str = "driving"):
     """获取两点间的路径规划"""
     try:
+        # 添加延迟避免QPS限制（免费版3次/秒）
+        time.sleep(0.4)  # 等待400ms
+        
         api_key = get_amap_api_key()
         origin = f"{start_coords[0]},{start_coords[1]}"
         destination = f"{end_coords[0]},{end_coords[1]}"
@@ -284,7 +304,7 @@ async def get_trip_path(request: PathRequest):
     try:
         # 获取起点坐标
         start_lng, start_lat = get_location_coordinates(request.start)
-        if not start_lng or not start_lat:
+        if start_lng is None or start_lat is None:
             return PathResponse(
                 success=False,
                 error_message=f"无法获取起点'{request.start}'的坐标信息"
@@ -292,10 +312,36 @@ async def get_trip_path(request: PathRequest):
         
         # 获取终点坐标
         end_lng, end_lat = get_location_coordinates(request.end)
-        if not end_lng or not end_lat:
+        if end_lng is None or end_lat is None:
             return PathResponse(
                 success=False,
                 error_message=f"无法获取终点'{request.end}'的坐标信息"
+            )
+        
+        # 验证坐标有效性
+        try:
+            start_lng = float(start_lng)
+            start_lat = float(start_lat)
+            end_lng = float(end_lng)
+            end_lat = float(end_lat)
+            
+            # 检查坐标范围
+            if not (-180 <= start_lng <= 180 and -90 <= start_lat <= 90):
+                return PathResponse(
+                    success=False,
+                    error_message=f"起点坐标无效: ({start_lng}, {start_lat})"
+                )
+            
+            if not (-180 <= end_lng <= 180 and -90 <= end_lat <= 90):
+                return PathResponse(
+                    success=False,
+                    error_message=f"终点坐标无效: ({end_lng}, {end_lat})"
+                )
+                
+        except (ValueError, TypeError):
+            return PathResponse(
+                success=False,
+                error_message="坐标格式错误，无法进行路径规划"
             )
         
         # 获取路径规划
@@ -316,13 +362,13 @@ async def get_trip_path(request: PathRequest):
         processed_data = {
             "start_point": {
                 "name": request.start,
-                "longitude": float(start_lng),
-                "latitude": float(start_lat)
+                "longitude": start_lng,  # 已经是 float 类型
+                "latitude": start_lat    # 已经是 float 类型
             },
             "end_point": {
                 "name": request.end,
-                "longitude": float(end_lng),
-                "latitude": float(end_lat)
+                "longitude": end_lng,    # 已经是 float 类型
+                "latitude": end_lat      # 已经是 float 类型
             },
             "mode": mode,
             "route_info": route_data.get("route", {}),
@@ -438,6 +484,203 @@ async def get_location_info(request: LocationRequest):
         )
     except Exception as e:
         return LocationResponse(
+            success=False,
+            error_message=f"服务器内部错误: {str(e)}"
+        )
+
+# 行程规划API
+@app.post("/api/trip/itinerary", response_model=ItineraryPlanResponse)
+async def plan_itinerary(request: ItineraryPlanRequest):
+    """根据目的地和天数规划行程"""
+    try:
+        # 获取通义千问客户端
+        llm = get_tongyi_client()
+        
+        # 构建提示词
+        prompt = f"""
+        请为用户制定一个为期{request.duration}天的{request.destination}旅行行程。
+        
+        用户信息：
+        - 目的地：{request.destination}
+        - 旅行天数：{request.duration}天
+        
+        请按以下格式返回行程安排：
+        {
+            "day_1": ["活动1", "活动2"],
+            "day_2": ["活动1", "活动2"],
+            ...
+        }
+        
+        每个活动要具体，包含地点和活动名称。
+        """
+        
+        # 使用通义千问生成行程
+        messages = [
+            SystemMessage(content="你是一位专业的旅行规划师，擅长为用户提供个性化的旅行行程规划。"),
+            HumanMessage(content=prompt)
+        ]
+        
+        response = llm.invoke(messages)
+        
+        # 处理AI响应内容
+        ai_content = response.content
+        if isinstance(ai_content, list):
+            text_content = ""
+            for item in ai_content:
+                if isinstance(item, dict) and "text" in item:
+                    text_content += item["text"]
+                elif isinstance(item, str):
+                    text_content += item
+            ai_content = text_content
+        
+        # 尝试解析为字典
+        import json
+        try:
+            plan_data = json.loads(str(ai_content))
+        except json.JSONDecodeError:
+            plan_data = None
+        
+        if not plan_data:
+            return ItineraryPlanResponse(
+                success=False,
+                error_message="无法解析行程规划，请稍后再试"
+            )
+        
+        return ItineraryPlanResponse(
+            success=True,
+            plan_data=plan_data
+        )
+        
+    except Exception as e:
+        return ItineraryPlanResponse(
+            success=False,
+            error_message=f"服务器内部错误: {str(e)}"
+        )
+
+# 新增行程规划API
+@app.post("/api/trip/plan", response_model=ItineraryPlanResponse)
+async def get_trip_plan(request: ItineraryPlanRequest):
+    """获取完整的行程规划，包含每日详细安排和地点坐标"""
+    try:
+        # 获取通义千问客户端
+        llm = get_tongyi_client()
+        
+        # 构建高级LLM Prompt
+        prompt = f"""
+        请为用户制定一个详细的{request.destination}{request.duration}天旅行行程规划。
+
+        要求：
+        1. 为每一天按顺序推荐3-4个逻辑上顺路的地点
+        2. 每天都要有一个主题描述
+        3. 必须严格按照以下JSON格式返回，不能有任何额外的解释性文字
+        
+        返回格式示例：
+        {{
+          "destination": "{request.destination}",
+          "total_days": {request.duration},
+          "itinerary": [
+            {{
+              "day": 1,
+              "theme": "第一天主题描述",
+              "places": [
+                {{ "name": "具体地点名称1" }},
+                {{ "name": "具体地点名称2" }},
+                {{ "name": "具体地点名称3" }}
+              ]
+            }},
+            {{
+              "day": 2,
+              "theme": "第二天主题描述",
+              "places": [
+                {{ "name": "具体地点名称4" }},
+                {{ "name": "具体地点名称5" }},
+                {{ "name": "具体地点名称6" }}
+              ]
+            }}
+          ]
+        }}
+        
+        注意：
+        - 只返回JSON格式，不要其他任何文字
+        - 地点名称要具体准确，便于地图定位
+        - 同一天的地点应该地理位置相对集中，便于游览
+        - 每天3-4个地点即可，不要过多
+        """
+        
+        # 使用通义千问生成行程规划
+        messages = [
+            SystemMessage(content="你是一位专业的旅行规划师，擅长制定详细的旅行行程。你必须严格按照要求的JSON格式返回结果。"),
+            HumanMessage(content=prompt)
+        ]
+        
+        response = llm.invoke(messages)
+        
+        # 处理AI响应内容
+        ai_content = response.content
+        if isinstance(ai_content, list):
+            text_content = ""
+            for item in ai_content:
+                if isinstance(item, dict) and "text" in item:
+                    text_content += item["text"]
+                elif isinstance(item, str):
+                    text_content += item
+            ai_content = text_content
+        
+        # 解析JSON
+        import json
+        import re
+        
+        # 提取JSON部分
+        json_match = re.search(r'\{.*\}', str(ai_content), re.DOTALL)
+        if not json_match:
+            raise ValueError("AI返回的内容不包含有效的JSON格式")
+        
+        json_str = json_match.group()
+        plan_data = json.loads(json_str)
+        
+        # 为每个地点获取坐标
+        if "itinerary" in plan_data:
+            for day_plan in plan_data["itinerary"]:
+                if "places" in day_plan:
+                    for place in day_plan["places"]:
+                        if "name" in place:
+                            lng, lat = get_location_coordinates(place["name"])
+                            if lng is not None and lat is not None:
+                                # 确保坐标是有效的浮点数
+                                try:
+                                    place["longitude"] = float(lng)
+                                    place["latitude"] = float(lat)
+                                    # 验证坐标范围
+                                    if not (-180 <= place["longitude"] <= 180 and -90 <= place["latitude"] <= 90):
+                                        print(f"警告：地点 '{place['name']}' 坐标超出有效范围: ({lng}, {lat})")
+                                        place["longitude"] = None
+                                        place["latitude"] = None
+                                except (ValueError, TypeError):
+                                    print(f"警告：地点 '{place['name']}' 坐标转换失败: ({lng}, {lat})")
+                                    place["longitude"] = None
+                                    place["latitude"] = None
+                            else:
+                                place["longitude"] = None
+                                place["latitude"] = None
+                                print(f"警告：无法获取地点 '{place['name']}' 的坐标")
+        
+        return ItineraryPlanResponse(
+            success=True,
+            plan_data=plan_data
+        )
+        
+    except json.JSONDecodeError as je:
+        return ItineraryPlanResponse(
+            success=False,
+            error_message=f"解析AI返回的JSON数据失败: {str(je)}"
+        )
+    except ValueError as ve:
+        return ItineraryPlanResponse(
+            success=False,
+            error_message=str(ve)
+        )
+    except Exception as e:
+        return ItineraryPlanResponse(
             success=False,
             error_message=f"服务器内部错误: {str(e)}"
         )

@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>前端坐标验证测试</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .result { margin: 10px 0; padding: 10px; background: #f5f5f5; border-radius: 3px; }
+        .success { color: #28a745; }
+        .error { color: #dc3545; }
+        .warning { color: #ffc107; }
+    </style>
+</head>
+<body>
+    <h1>前端坐标验证测试</h1>
+    
+    <div class="test-section">
+        <h2>测试后端API数据</h2>
+        <button onclick="testBackendData()">测试后端API数据格式</button>
+        <div id="backendResult"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>测试坐标验证函数</h2>
+        <button onclick="testCoordinateValidation()">测试坐标验证</button>
+        <div id="validationResult"></div>
+    </div>
+    
+    <script>
+        // 模拟前端坐标验证函数
+        function validateAndConvertCoordinates(place) {
+            const lng = parseFloat(place.longitude);
+            const lat = parseFloat(place.latitude);
+            
+            // 验证坐标有效性
+            if (isNaN(lng) || isNaN(lat) || !isFinite(lng) || !isFinite(lat)) {
+                console.warn(`地点 "${place.name}" 坐标无效:`, { longitude: place.longitude, latitude: place.latitude });
+                return null;
+            }
+            
+            // 检查坐标范围
+            if (lng < -180 || lng > 180 || lat < -90 || lat > 90) {
+                console.warn(`地点 "${place.name}" 坐标超出范围:`, { lng, lat });
+                return null;
+            }
+            
+            // 排除0,0坐标
+            if (lng === 0 && lat === 0) {
+                console.warn(`地点 "${place.name}" 坐标为原点，可能无效`);
+                return null;
+            }
+            
+            return {
+                ...place,
+                longitude: lng,
+                latitude: lat
+            };
+        }
+        
+        // 测试后端API数据
+        async function testBackendData() {
+            const resultDiv = document.getElementById('backendResult');
+            resultDiv.innerHTML = '<p>正在测试...</p>';
+            
+            try {
+                // 测试行程规划API
+                const response = await fetch('http://localhost:8000/api/trip/plan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ destination: "北京", duration: 2 })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    let html = '<h3>✅ 后端API测试成功</h3>';
+                    let totalPlaces = 0;
+                    let validPlaces = 0;
+                    let invalidPlaces = 0;
+                    
+                    data.plan_data.itinerary.forEach(dayPlan => {
+                        html += `<h4>第${dayPlan.day}天:</h4>`;
+                        dayPlan.places.forEach(place => {
+                            totalPlaces++;
+                            const validPlace = validateAndConvertCoordinates(place);
+                            
+                            if (validPlace) {
+                                validPlaces++;
+                                html += `<div class="result success">✅ ${place.name}: (${place.longitude}, ${place.latitude}) - 类型: ${typeof place.longitude}, ${typeof place.latitude}</div>`;
+                            } else {
+                                invalidPlaces++;
+                                html += `<div class="result error">❌ ${place.name}: 坐标无效</div>`;
+                            }
+                        });
+                    });
+                    
+                    html += `<div class="result"><strong>统计:</strong> 总计${totalPlaces}个地点，有效${validPlaces}个，无效${invalidPlaces}个</div>`;
+                    resultDiv.innerHTML = html;
+                } else {
+                    resultDiv.innerHTML = `<div class="result error">❌ API调用失败: ${data.error_message}</div>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="result error">❌ 网络错误: ${error.message}</div>`;
+            }
+        }
+        
+        // 测试坐标验证函数
+        function testCoordinateValidation() {
+            const resultDiv = document.getElementById('validationResult');
+            
+            const testCases = [
+                { name: "正常坐标", longitude: 116.397755, latitude: 39.903179 },
+                { name: "字符串坐标", longitude: "116.397755", latitude: "39.903179" },
+                { name: "NaN坐标", longitude: NaN, latitude: 39.903179 },
+                { name: "null坐标", longitude: null, latitude: 39.903179 },
+                { name: "undefined坐标", longitude: undefined, latitude: 39.903179 },
+                { name: "超出范围坐标", longitude: 200, latitude: 39.903179 },
+                { name: "原点坐标", longitude: 0, latitude: 0 },
+                { name: "非有限数", longitude: Infinity, latitude: 39.903179 }
+            ];
+            
+            let html = '<h3>坐标验证测试结果:</h3>';
+            
+            testCases.forEach(testCase => {
+                const result = validateAndConvertCoordinates(testCase);
+                if (result) {
+                    html += `<div class="result success">✅ ${testCase.name}: 验证通过</div>`;
+                } else {
+                    html += `<div class="result error">❌ ${testCase.name}: 验证失败</div>`;
+                }
+            });
+            
+            resultDiv.innerHTML = html;
+        }
+    </script>
+</body>
+</html>

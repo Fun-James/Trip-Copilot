@@ -186,12 +186,31 @@ const geocodePlace = (placeName) => {
       geocoder.getLocation(placeName, (status, result) => {
         if (status === 'complete' && result.geocodes.length > 0) {
           const location = result.geocodes[0].location
+          const lng = parseFloat(location.lng)
+          const lat = parseFloat(location.lat)
+          
+          console.log(`地理编码结果 "${placeName}":`, { lng, lat, status, result })
+          
+          // 严格验证地理编码返回的坐标
+          if (!isValidCoordinate(lng, lat)) {
+            console.error(`地理编码返回无效坐标 "${placeName}":`, { lng, lat })
+            reject(new Error(`地点 "${placeName}" 的坐标无效: lng=${lng}, lat=${lat}`))
+            return
+          }
+          
+          // 检查坐标是否在合理的中国范围内
+          if (lng < 70 || lng > 140 || lat < 15 || lat > 60) {
+            console.warn(`地点 "${placeName}" 的坐标超出中国范围:`, { lng, lat })
+            // 不直接拒绝，但给出警告，可能是海外地点
+          }
+          
           resolve({
-            lng: location.lng,
-            lat: location.lat,
+            lng: lng,
+            lat: lat,
             address: result.geocodes[0].formattedAddress
           })
         } else {
+          console.error(`地理编码失败 "${placeName}":`, { status, result })
           reject(new Error(`无法找到地点: ${placeName}`))
         }
       })
@@ -370,18 +389,104 @@ const resetMapState = () => {
   
   try {
     console.log('尝试重置地图状态')
-    // 重新设置基本配置
-    map.value.setZoom(10)
-    map.value.setCenter([116.397428, 39.90923]) // 回到默认位置（北京）
     
-    // 清除所有可能有问题的对象
-    clearRoute()
-    clearMarkers()
-    
-    console.log('地图状态重置成功')
-    return true
+    // 先尝试简单重置
+    try {
+      map.value.setZoom(10)
+      map.value.setCenter([116.397428, 39.90923]) // 回到默认位置（北京）
+      
+      // 清除所有可能有问题的对象
+      clearRoute()
+      clearMarkers()
+      
+      console.log('地图状态重置成功')
+      return true
+    } catch (simpleResetError) {
+      console.warn('简单重置失败，尝试完全重新初始化地图:', simpleResetError)
+      
+      // 如果简单重置失败，说明地图状态已完全损坏，需要重新初始化
+      return reinitializeMap()
+    }
   } catch (error) {
     console.error('地图状态重置失败:', error)
+    return false
+  }
+}
+
+/**
+ * 完全重新初始化地图
+ * 当地图状态完全损坏时使用
+ */
+const reinitializeMap = () => {
+  try {
+    console.log('开始重新初始化地图')
+    
+    // 清除现有地图实例
+    if (map.value) {
+      try {
+        map.value.destroy()
+      } catch (destroyError) {
+        console.warn('销毁地图实例时出错:', destroyError)
+      }
+      map.value = null
+    }
+    
+    // 清空相关状态
+    markers.value = []
+    routePolyline.value = null
+    mapInitialized.value = false
+    
+    // 重新创建地图实例
+    setTimeout(() => {
+      try {
+        // 检查API密钥是否已配置
+        const apiSecret = import.meta.env.VITE_AMAP_SECRET
+        
+        // 如果配置了安全密钥，设置安全验证
+        if (apiSecret && apiSecret !== 'YOUR_AMAP_SECRET_HERE') {
+          try {
+            window._AMapSecurityConfig = {
+              securityJsCode: apiSecret,
+            }
+          } catch (error) {
+            console.warn('安全密钥配置失败:', error)
+          }
+        }
+        
+        // 创建新的地图实例
+        map.value = new AMap.Map('amap-container', {
+          zoom: 12,
+          center: [116.397428, 39.90923], // 默认北京
+          mapStyle: 'amap://styles/normal',
+          viewMode: '2D',
+          features: ['bg', 'point', 'road', 'building'],
+          resizeEnable: true,
+          rotateEnable: true,
+          pitchEnable: false,
+          zoomEnable: true,
+          dragEnable: true,
+          keyboardEnable: true,
+          doubleClickZoom: true,
+          scrollWheel: true
+        })
+        
+        // 添加地图控件
+        addMapControls()
+        
+        mapInitialized.value = true
+        console.log('地图重新初始化成功')
+        
+        return true
+      } catch (reinitError) {
+        console.error('重新初始化地图失败:', reinitError)
+        mapInitialized.value = false
+        return false
+      }
+    }, 100)
+    
+    return true
+  } catch (error) {
+    console.error('重新初始化地图过程失败:', error)
     return false
   }
 }
@@ -392,13 +497,43 @@ const resetMapState = () => {
  */
 const isMapReady = () => {
   if (!map.value || !mapInitialized.value) {
+    console.log('地图检查失败: 地图实例或初始化状态异常')
     return false
   }
   
   try {
-    // 尝试获取地图缩放级别而不是中心点，因为中心点可能被破坏
+    // 尝试获取地图缩放级别
     const zoom = map.value.getZoom()
-    return !isNaN(zoom) && zoom > 0
+    const isValidZoom = !isNaN(zoom) && zoom > 0
+    
+    if (!isValidZoom) {
+      console.warn('地图缩放级别异常:', zoom)
+      return false
+    }
+    
+    // 尝试获取地图中心点（安全检查）
+    try {
+      const center = map.value.getCenter()
+      if (!center) {
+        console.warn('地图中心点为空')
+        return false
+      }
+      
+      // 检查中心点坐标是否有效
+      const centerLng = center.lng
+      const centerLat = center.lat
+      
+      if (isNaN(centerLng) || isNaN(centerLat) || !isFinite(centerLng) || !isFinite(centerLat)) {
+        console.warn('地图中心点坐标异常:', { lng: centerLng, lat: centerLat })
+        return false
+      }
+      
+      return true
+    } catch (centerError) {
+      console.warn('获取地图中心点失败:', centerError)
+      return false
+    }
+    
   } catch (error) {
     console.warn('地图状态检查失败:', error)
     return false
@@ -414,6 +549,25 @@ const drawRoute = async (routeData) => {
     console.log('地图或路径数据为空')
     return
   }
+
+  // 详细打印完整的路径数据
+  console.log('=== 完整的路径数据 ===')
+  console.log('routeData:', JSON.stringify(routeData, null, 2))
+  console.log('routeData 类型:', typeof routeData)
+  console.log('routeData.start_point:', routeData.start_point)
+  console.log('routeData.end_point:', routeData.end_point)
+  console.log('routeData.route_info:', routeData.route_info)
+  
+  if (routeData.start_point) {
+    console.log('起点经度类型:', typeof routeData.start_point.longitude, '值:', routeData.start_point.longitude)
+    console.log('起点纬度类型:', typeof routeData.start_point.latitude, '值:', routeData.start_point.latitude)
+  }
+  
+  if (routeData.end_point) {
+    console.log('终点经度类型:', typeof routeData.end_point.longitude, '值:', routeData.end_point.longitude)
+    console.log('终点纬度类型:', typeof routeData.end_point.latitude, '值:', routeData.end_point.latitude)
+  }
+  console.log('=== 路径数据打印结束 ===')
 
   // 检查地图状态，如果异常则尝试重置
   if (!isMapReady()) {
@@ -854,7 +1008,58 @@ watch(() => props.itineraryData, (newData) => {
 // 监听中心位置变化
 watch(() => props.centerLocation, (newCenter) => {
   if (map.value && newCenter) {
-    map.value.setCenter([newCenter.lng, newCenter.lat])
+    console.log('监听到中心位置变化:', newCenter)
+    
+    // 验证新的中心位置坐标
+    const lng = parseFloat(newCenter.lng)
+    const lat = parseFloat(newCenter.lat)
+    
+    if (!isValidCoordinate(lng, lat)) {
+      console.error('新的中心位置坐标无效:', { lng, lat, original: newCenter })
+      return
+    }
+    
+    console.log('设置地图中心到:', { lng, lat })
+    
+    try {
+      // 在设置中心前，先检查地图状态
+      if (!isMapReady()) {
+        console.warn('地图状态异常，尝试重新初始化')
+        if (reinitializeMap()) {
+          // 重新初始化后，延迟设置中心点
+          setTimeout(() => {
+            if (map.value && mapInitialized.value) {
+              try {
+                map.value.setCenter([lng, lat])
+                console.log('重新初始化后设置中心成功')
+              } catch (retryError) {
+                console.error('重新初始化后设置中心仍然失败:', retryError)
+              }
+            }
+          }, 1000)
+        }
+        return
+      }
+      
+      map.value.setCenter([lng, lat])
+    } catch (error) {
+      console.error('设置地图中心失败:', error)
+      // 如果设置失败，尝试重新初始化地图
+      console.warn('尝试重新初始化地图以修复问题')
+      if (reinitializeMap()) {
+        // 重新初始化后，延迟设置中心点
+        setTimeout(() => {
+          if (map.value && mapInitialized.value) {
+            try {
+              map.value.setCenter([lng, lat])
+              console.log('重新初始化后设置中心成功')
+            } catch (retryError) {
+              console.error('重新初始化后设置中心仍然失败:', retryError)
+            }
+          }
+        }, 1000)
+      }
+    }
   }
 }, { deep: true })
 
@@ -930,6 +1135,183 @@ onMounted(() => {
       mapInitialized.value = false
     }
   })
+})
+
+/**
+ * 更新指定天数的路线显示
+ * @param {Array} places - 当天的地点列表
+ * @param {number} day - 天数
+ */
+const updateDayRoute = async (places, day) => {
+  if (!map.value || !places || places.length === 0) return
+  
+  try {
+    // 清除现有的标记和路线
+    clearMarkers()
+    clearRoute()
+    
+    // 验证并过滤有效的地点坐标
+    const validPlaces = places.filter(place => {
+      if (!place.longitude || !place.latitude) return false
+      
+      const lng = parseFloat(place.longitude)
+      const lat = parseFloat(place.latitude)
+      
+      // 检查是否为有效数值
+      if (isNaN(lng) || isNaN(lat) || !isFinite(lng) || !isFinite(lat)) {
+        console.warn(`地点 "${place.name}" 坐标无效:`, { lng, lat })
+        return false
+      }
+      
+      // 检查坐标范围
+      if (lng < -180 || lng > 180 || lat < -90 || lat > 90) {
+        console.warn(`地点 "${place.name}" 坐标超出范围:`, { lng, lat })
+        return false
+      }
+      
+      // 更新place对象，确保坐标为数值类型
+      place.longitude = lng
+      place.latitude = lat
+      
+      return true
+    })
+    
+    if (validPlaces.length === 0) {
+      console.warn(`第${day}天没有有效的地点坐标`)
+      return
+    }
+    
+    console.log(`第${day}天有效地点数:`, validPlaces.length)
+    
+    // 创建地点标记
+    validPlaces.forEach((place, index) => {
+      try {
+        const marker = new AMap.Marker({
+          position: [place.longitude, place.latitude],
+          title: place.name,
+          content: `
+            <div class="custom-marker day-${day}">
+              <span class="marker-number">${index + 1}</span>
+            </div>
+          `,
+          anchor: 'center'
+        })
+        
+        // 创建信息窗口
+        const infoWindow = new AMap.InfoWindow({
+          content: `
+            <div class="info-window">
+              <h4>第${day}天 - 第${index + 1}站</h4>
+              <p><strong>${place.name}</strong></p>
+              <small>经度: ${place.longitude.toFixed(4)}, 纬度: ${place.latitude.toFixed(4)}</small>
+            </div>
+          `,
+          anchor: 'bottom-center',
+          offset: new AMap.Pixel(0, -36)
+        })
+        
+        // 点击标记显示信息窗口
+        marker.on('click', () => {
+          infoWindow.open(map.value, marker.getPosition())
+        })
+        
+        markers.value.push(marker)
+        map.value.add(marker)
+        
+      } catch (markerError) {
+        console.error(`创建地点标记失败 (${place.name}):`, markerError)
+      }
+    })
+    
+    // 如果有多个地点，绘制路线
+    if (validPlaces.length > 1) {
+      await drawDayRoute(validPlaces)
+    }
+    
+    // 调整地图视野以包含所有地点
+    if (validPlaces.length > 0) {
+      const bounds = new AMap.Bounds()
+      validPlaces.forEach(place => {
+        bounds.extend([place.longitude, place.latitude])
+      })
+      map.value.setBounds(bounds, false, [20, 20, 20, 20])
+    }
+    
+  } catch (error) {
+    console.error('更新当天路线失败:', error)
+  }
+}
+
+/**
+ * 绘制当天的路线
+ * @param {Array} places - 地点列表
+ */
+const drawDayRoute = async (places) => {
+  if (!map.value || places.length < 2) return
+  
+  console.log('开始绘制当天路线，地点数据:', places)
+  
+  try {
+    // 加载驾车路线规划插件
+    AMap.plugin('AMap.Driving', () => {
+      console.log('AMap.Driving 插件加载成功')
+      
+      const driving = new AMap.Driving({
+        map: map.value,
+        hideMarkers: true, // 隐藏默认标记，使用自定义标记
+        showTraffic: false,
+        policy: AMap.DrivingPolicy.LEAST_TIME
+      })
+      
+      // 构建路径点
+      const waypoints = places.map(place => [place.longitude, place.latitude])
+      const start = waypoints[0]
+      const end = waypoints[waypoints.length - 1]
+      const viaPoints = waypoints.slice(1, -1)
+      
+      console.log('路线规划参数:', {
+        start,
+        end,
+        viaPoints,
+        totalWaypoints: waypoints.length
+      })
+      
+      // 执行路线搜索
+      driving.search(start, end, {
+        waypoints: viaPoints
+      }, (status, result) => {
+        console.log('路线规划结果:', { status, result })
+        
+        if (status === 'complete' && result.routes && result.routes.length > 0) {
+          console.log(`当天路线规划完成，共${result.routes[0].steps.length}个步骤`)
+          console.log('路线详情:', result.routes[0])
+        } else {
+          console.warn('当天路线规划失败:', { status, result })
+          
+          // 详细分析失败原因
+          if (result && result.info) {
+            console.error('路线规划错误信息:', result.info)
+          }
+          
+          // 如果是API密钥相关错误，给出具体提示
+          if (status === 'error' || (result && result.info && result.info.includes('INVALID'))) {
+            console.error('可能的API密钥问题，请检查高德地图API配置')
+          }
+        }
+      })
+    })
+  } catch (error) {
+    console.error('绘制当天路线失败:', error)
+    console.error('错误详情:', {
+      message: error.message,
+      stack: error.stack
+    })
+  }
+}
+
+// 对外暴露方法
+defineExpose({
+  updateDayRoute
 })
 </script>
 
@@ -1046,6 +1428,35 @@ onMounted(() => {
 
 .config-steps a:hover {
   text-decoration: underline;
+}
+
+/* 不同天数的标记样式 */
+:global(.custom-marker.day-1) {
+  background: linear-gradient(135deg, #1a73e8 0%, #4285f4 100%);
+}
+
+:global(.custom-marker.day-2) {
+  background: linear-gradient(135deg, #34a853 0%, #4caf50 100%);
+}
+
+:global(.custom-marker.day-3) {
+  background: linear-gradient(135deg, #ff6b6b 0%, #ff8e8e 100%);
+}
+
+:global(.custom-marker.day-4) {
+  background: linear-gradient(135deg, #ffa726 0%, #ffb74d 100%);
+}
+
+:global(.custom-marker.day-5) {
+  background: linear-gradient(135deg, #ab47bc 0%, #ba68c8 100%);
+}
+
+:global(.custom-marker.day-6) {
+  background: linear-gradient(135deg, #26c6da 0%, #4dd0e1 100%);
+}
+
+:global(.custom-marker.day-7) {
+  background: linear-gradient(135deg, #66bb6a 0%, #81c784 100%);
 }
 
 /* 全局样式，用于地图标记 */

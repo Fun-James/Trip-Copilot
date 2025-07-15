@@ -50,23 +50,40 @@
     <div class="main-content">
       <!-- 搜索输入框 -->
       <div class="search-container">
-        <el-input
-          v-model="searchQuery"
-          placeholder="请输入您的旅行需求，例如：北京3天游..."
-          class="search-input"
-          size="large"
-          @keyup.enter="handleSearch"
-        >
-          <template #suffix>
-            <el-button 
-              type="primary" 
-              :icon="Search" 
-              @click="handleSearch"
-              :loading="loading"
-              circle
-            />
-          </template>
-        </el-input>
+        <div class="search-form">
+          <el-input
+            v-model="searchQuery"
+            placeholder="请输入旅行目的地，例如：北京、上海..."
+            class="destination-input"
+            size="large"
+            @keyup.enter="handleSearch"
+          >
+            <template #prepend>目的地</template>
+          </el-input>
+          
+          <el-input-number
+            v-model="tripDuration"
+            :min="1"
+            :max="30"
+            placeholder="天数"
+            class="duration-input"
+            size="large"
+            controls-position="right"
+          >
+            <template #prepend>天数</template>
+          </el-input-number>
+          
+          <el-button 
+            type="primary" 
+            :icon="Search" 
+            @click="handleSearch"
+            :loading="loading"
+            size="large"
+            class="search-btn"
+          >
+            开始规划
+          </el-button>
+        </div>
       </div>
 
       <!-- 两栏内容区 -->
@@ -81,7 +98,8 @@
           </div>
           
           <div class="messages-container" ref="messagesContainer">
-            <div v-if="messages.length === 0" class="welcome-message">
+            <!-- 欢迎界面 -->
+            <div v-if="!currentPlan && messages.length === 0" class="welcome-message">
               <div class="welcome-icon">
                 <el-icon><Location /></el-icon>
               </div>
@@ -103,10 +121,55 @@
               </div>
             </div>
             
-            <div v-for="message in messages" :key="message.id" class="message-item">
-              <div :class="['message-bubble', message.type]">
-                <div class="message-content">{{ message.content }}</div>
-                <div class="message-time">{{ formatTime(message.timestamp) }}</div>
+            <!-- 结构化行程显示 -->
+            <div v-if="currentPlan" class="itinerary-display">
+              <div class="itinerary-header">
+                <h3>{{ currentPlan.destination }}{{ currentPlan.total_days }}日游</h3>
+                <div class="itinerary-summary">
+                  <span>共{{ currentPlan.total_days }}天</span>
+                  <span>{{ getTotalPlaces() }}个景点</span>
+                </div>
+              </div>
+              
+              <div class="itinerary-days">
+                <div 
+                  v-for="dayPlan in currentPlan.itinerary" 
+                  :key="dayPlan.day"
+                  :class="['day-item', { active: selectedDay === dayPlan.day }]"
+                  @click="selectDay(dayPlan.day)"
+                >
+                  <div class="day-header">
+                    <div class="day-number">第{{ dayPlan.day }}天</div>
+                    <div class="day-theme">{{ dayPlan.theme }}</div>
+                  </div>
+                  
+                  <div class="day-places">
+                    <div 
+                      v-for="(place, index) in dayPlan.places" 
+                      :key="index"
+                      class="place-item"
+                    >
+                      <div class="place-marker">{{ index + 1 }}</div>
+                      <div class="place-info">
+                        <div class="place-name">{{ place.name }}</div>
+                        <div v-if="place.longitude && place.latitude" class="place-coords">
+                          <el-icon><LocationFilled /></el-icon>
+                          <span>{{ place.latitude.toFixed(4) }}, {{ place.longitude.toFixed(4) }}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <!-- 传统消息显示（兼容旧功能） -->
+            <div v-if="!currentPlan && messages.length > 0">
+              <div v-for="message in messages" :key="message.id" class="message-item">
+                <div :class="['message-bubble', message.type]">
+                  <div class="message-content">{{ message.content }}</div>
+                  <div class="message-time">{{ formatTime(message.timestamp) }}</div>
+                </div>
               </div>
             </div>
           </div>
@@ -248,6 +311,7 @@ export default {
   },
   setup() {
     const searchQuery = ref('')
+    const tripDuration = ref(3) // 新增：旅行天数
     const messages = ref([])
     const loading = ref(false)
     const messagesContainer = ref(null)
@@ -259,6 +323,10 @@ export default {
     // 地图相关数据
     const currentItinerary = ref([])
     const mapCenter = ref({ lng: 116.397428, lat: 39.90923 }) // 默认北京
+    
+    // 新增：行程规划相关数据
+    const currentPlan = ref(null) // 当前行程规划数据
+    const selectedDay = ref(1) // 当前选中的天数
     
     // 路径规划相关数据
     const showRoutePanel = ref(false)
@@ -543,7 +611,37 @@ export default {
         if (response.data.success) {
           const pathData = response.data.path_data
           console.log('收到路径数据:', pathData)
-          currentRoute.value = pathData
+          
+          // 验证路径数据中的坐标
+          const startLng = parseFloat(pathData.start_point.longitude)
+          const startLat = parseFloat(pathData.start_point.latitude)
+          const endLng = parseFloat(pathData.end_point.longitude)
+          const endLat = parseFloat(pathData.end_point.latitude)
+          
+          // 检查坐标有效性
+          if (isNaN(startLng) || isNaN(startLat) || isNaN(endLng) || isNaN(endLat)) {
+            console.error('路径数据中包含无效坐标:', {
+              start: { lng: startLng, lat: startLat },
+              end: { lng: endLng, lat: endLat }
+            })
+            ElMessage.error('路径数据中包含无效坐标')
+            return
+          }
+          
+          // 更新路径数据，确保坐标为数值类型
+          currentRoute.value = {
+            ...pathData,
+            start_point: {
+              ...pathData.start_point,
+              longitude: startLng,
+              latitude: startLat
+            },
+            end_point: {
+              ...pathData.end_point,
+              longitude: endLng,
+              latitude: endLat
+            }
+          }
           
           // 更新路径信息
           const routeData = pathData.route_info
@@ -559,8 +657,8 @@ export default {
           
           // 更新地图中心到起点
           mapCenter.value = {
-            lng: pathData.start_point.longitude,
-            lat: pathData.start_point.latitude
+            lng: startLng,
+            lat: startLat
           }
           
           console.log('地图中心更新:', mapCenter.value)
@@ -637,44 +735,213 @@ export default {
       ElMessage.success('路径已清除')
     }
 
-    // 处理搜索
+    // 处理搜索 - 重构为行程规划
     const handleSearch = async () => {
-      if (!searchQuery.value.trim()) return
+      if (!searchQuery.value.trim()) {
+        ElMessage.warning('请输入目的地')
+        return
+      }
+      
+      if (!tripDuration.value || tripDuration.value < 1) {
+        ElMessage.warning('请输入有效的旅行天数')
+        return
+      }
 
-      const userQuery = searchQuery.value
-      addMessage(userQuery, 'user')
+      const destination = searchQuery.value.trim()
+      const duration = tripDuration.value
+      
+      // 添加用户消息（用于兼容历史记录）
+      addMessage(`我想去${destination}玩${duration}天，请帮我规划行程`, 'user')
       
       // 从查询中更新地图中心
-      updateMapCenterFromQuery(userQuery)
+      updateMapCenterFromQuery(destination)
       
-      searchQuery.value = ''
       loading.value = true
 
       try {
-        // 调用后端API
-        const response = await axios.post('http://localhost:8000/api/trip/suggest', {
-          destination: userQuery,
-          duration: null,
-          budget: null,
-          interests: []
+        // 调用新的行程规划API
+        const response = await axios.post('http://localhost:8000/api/trip/plan', {
+          destination: destination,
+          duration: duration
         })
 
-        const recommendations = response.data.recommendations
-        const suggestions = recommendations.join('\n• ')
-        addMessage(`为您推荐以下旅行建议：\n• ${suggestions}`, 'assistant')
-        
-        // 解析行程数据并更新地图
-        const itinerary = parseItineraryFromRecommendations(recommendations)
-        currentItinerary.value = itinerary
+        if (response.data.success && response.data.plan_data) {
+          const planData = response.data.plan_data
+          currentPlan.value = planData
+          selectedDay.value = 1 // 默认选中第一天
+          
+          // 更新地图数据
+          updateMapWithPlan(planData)
+          
+          // 添加成功消息
+          addMessage(`已为您规划${destination}${duration}天的详细行程，请查看左侧面板和右侧地图`, 'assistant')
+          
+          ElMessage.success('行程规划完成！')
+        } else {
+          throw new Error(response.data.error_message || '行程规划失败')
+        }
         
         // 保存到历史记录
         saveCurrentChat()
       } catch (error) {
-        console.error('API调用失败:', error)
-        addMessage('抱歉，获取旅行建议时出现错误。请稍后再试。', 'assistant')
+        console.error('行程规划API调用失败:', error)
+        addMessage('抱歉，行程规划时出现错误。请稍后再试。', 'assistant')
+        ElMessage.error('行程规划失败，请重试')
       } finally {
         loading.value = false
       }
+    }
+
+    /**
+     * 选择某一天的行程
+     */
+    const selectDay = (day) => {
+      selectedDay.value = day
+      if (currentPlan.value) {
+        updateMapForDay(day)
+      }
+    }
+    
+    /**
+     * 更新地图显示指定天数的行程
+     */
+    const updateMapForDay = (day) => {
+      if (!currentPlan.value || !currentPlan.value.itinerary) {
+        console.warn('没有行程数据')
+        return
+      }
+      
+      const dayPlan = currentPlan.value.itinerary.find(d => d.day === day)
+      if (!dayPlan) {
+        console.warn(`找不到第${day}天的行程`)
+        return
+      }
+      
+      // 验证并过滤当天的地点数据
+      const dayPlaces = []
+      let invalidCount = 0
+      
+      if (dayPlan.places && Array.isArray(dayPlan.places)) {
+        dayPlan.places.forEach(place => {
+          const validPlace = validateAndConvertCoordinates(place)
+          if (validPlace) {
+            dayPlaces.push(validPlace)
+          } else {
+            invalidCount++
+          }
+        })
+      }
+      
+      console.log(`第${day}天: 有效地点 ${dayPlaces.length} 个，无效地点 ${invalidCount} 个`)
+      
+      // 更新地图组件的数据
+      if (mapDisplayRef.value && dayPlaces.length > 0) {
+        mapDisplayRef.value.updateDayRoute(dayPlaces, day)
+        
+        // 更新地图中心到当天第一个地点
+        mapCenter.value = {
+          lng: dayPlaces[0].longitude,
+          lat: dayPlaces[0].latitude
+        }
+      } else if (dayPlaces.length === 0) {
+        console.warn(`第${day}天没有有效的地点坐标`)
+      }
+    }
+    
+    /**
+     * 验证并转换坐标
+     */
+    const validateAndConvertCoordinates = (place) => {
+      const lng = parseFloat(place.longitude)
+      const lat = parseFloat(place.latitude)
+      
+      // 验证坐标有效性
+      if (isNaN(lng) || isNaN(lat) || !isFinite(lng) || !isFinite(lat)) {
+        console.warn(`地点 "${place.name}" 坐标无效:`, { longitude: place.longitude, latitude: place.latitude })
+        return null
+      }
+      
+      // 检查坐标范围
+      if (lng < -180 || lng > 180 || lat < -90 || lat > 90) {
+        console.warn(`地点 "${place.name}" 坐标超出范围:`, { lng, lat })
+        return null
+      }
+      
+      // 排除0,0坐标
+      if (lng === 0 && lat === 0) {
+        console.warn(`地点 "${place.name}" 坐标为原点，可能无效`)
+        return null
+      }
+      
+      return {
+        ...place,
+        longitude: lng,
+        latitude: lat
+      }
+    }
+
+    /**
+     * 根据行程规划更新地图
+     */
+    const updateMapWithPlan = (planData) => {
+      if (!planData || !planData.itinerary) {
+        console.warn('行程规划数据为空')
+        return
+      }
+      
+      // 收集所有地点并验证坐标
+      const allPlaces = []
+      let invalidPlaces = 0
+      
+      planData.itinerary.forEach(dayPlan => {
+        if (dayPlan.places && Array.isArray(dayPlan.places)) {
+          dayPlan.places.forEach(place => {
+            const validPlace = validateAndConvertCoordinates(place)
+            if (validPlace) {
+              allPlaces.push({
+                ...validPlace,
+                day: dayPlan.day
+              })
+            } else {
+              invalidPlaces++
+            }
+          })
+        }
+      })
+      
+      console.log(`处理完成: 有效地点 ${allPlaces.length} 个，无效地点 ${invalidPlaces} 个`)
+      
+      // 更新当前行程数据
+      currentItinerary.value = allPlaces
+      
+      // 如果有有效地点，更新地图中心到第一个地点
+      if (allPlaces.length > 0) {
+        const firstPlace = allPlaces[0]
+        mapCenter.value = {
+          lng: firstPlace.longitude,
+          lat: firstPlace.latitude
+        }
+        console.log('地图中心已更新到:', mapCenter.value, '地点:', firstPlace.name)
+      } else {
+        console.warn('没有有效的地点坐标，保持默认地图中心')
+        ElMessage.warning('部分地点坐标无效，地图显示可能不完整')
+      }
+      
+      // 默认显示第一天的路线
+      nextTick(() => {
+        updateMapForDay(1)
+      })
+    }
+    
+    /**
+     * 获取总地点数
+     */
+    const getTotalPlaces = () => {
+      if (!currentPlan.value || !currentPlan.value.itinerary) return 0
+      
+      return currentPlan.value.itinerary.reduce((total, dayPlan) => {
+        return total + (dayPlan.places ? dayPlan.places.length : 0)
+      }, 0)
     }
 
     // 组件挂载时加载历史记录
@@ -682,6 +949,7 @@ export default {
 
     return {
       searchQuery,
+      tripDuration,
       messages,
       loading,
       messagesContainer,
@@ -691,6 +959,12 @@ export default {
       mapDisplayRef,
       currentItinerary,
       mapCenter,
+      // 行程规划相关
+      currentPlan,
+      selectedDay,
+      selectDay,
+      updateMapWithPlan,
+      getTotalPlaces,
       // 路径规划相关
       showRoutePanel,
       routeForm,
@@ -968,52 +1242,178 @@ export default {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
-.search-input {
+.search-form {
+  display: flex;
+  gap: 12px;
+  align-items: center;
   width: 100%;
 }
 
-.search-input :deep(.el-input__wrapper) {
-  border-radius: 25px;
-  padding: 6px 6px 6px 20px;
+.destination-input {
+  flex: 2;
+}
+
+.duration-input {
+  flex: 1;
+  min-width: 120px;
+}
+
+.search-btn {
+  min-width: 100px;
+  height: 40px;
+}
+
+.destination-input :deep(.el-input__wrapper),
+.duration-input :deep(.el-input-number) {
+  border-radius: 8px;
   border: 2px solid #e8eaed;
   transition: all 0.3s;
   background-color: #f8f9fa;
-  display: flex;
-  align-items: center;
-  min-height: 46px;
 }
 
-.search-input :deep(.el-input__wrapper:hover) {
+.destination-input :deep(.el-input__wrapper:hover),
+.duration-input :deep(.el-input-number:hover) {
   border-color: #dadce0;
   background-color: #ffffff;
 }
 
-.search-input :deep(.el-input__wrapper.is-focus) {
+.destination-input :deep(.el-input__wrapper.is-focus),
+.duration-input :deep(.el-input-number.is-focus) {
   border-color: #1a73e8;
   background-color: #ffffff;
   box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
 }
 
-.search-input :deep(.el-input__suffix) {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0;
-  padding: 0;
+/* 行程显示样式 */
+.itinerary-display {
+  padding: 20px;
+  background-color: #ffffff;
 }
 
-.search-input :deep(.el-button.is-circle) {
-  width: 34px;
-  height: 34px;
-  min-height: 34px;
-  padding: 0;
-  margin: 0;
+.itinerary-header {
+  margin-bottom: 20px;
+  padding-bottom: 15px;
+  border-bottom: 2px solid #f0f0f0;
+}
+
+.itinerary-header h3 {
+  margin: 0 0 8px 0;
+  color: #1a73e8;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.itinerary-summary {
+  display: flex;
+  gap: 15px;
+  color: #5f6368;
+  font-size: 14px;
+}
+
+.itinerary-days {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.day-item {
+  border: 2px solid #e8eaed;
+  border-radius: 12px;
+  background-color: #fafbfc;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  overflow: hidden;
+}
+
+.day-item:hover {
+  border-color: #1a73e8;
+  background-color: #f8f9ff;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(26, 115, 232, 0.15);
+}
+
+.day-item.active {
+  border-color: #1a73e8;
+  background-color: #e8f0fe;
+  box-shadow: 0 2px 8px rgba(26, 115, 232, 0.2);
+}
+
+.day-header {
+  padding: 16px 20px 12px;
+  background: linear-gradient(135deg, #1a73e8 0%, #4285f4 100%);
+  color: white;
+}
+
+.day-item.active .day-header {
+  background: linear-gradient(135deg, #137333 0%, #34a853 100%);
+}
+
+.day-number {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.day-theme {
+  font-size: 14px;
+  opacity: 0.9;
+  line-height: 1.4;
+}
+
+.day-places {
+  padding: 16px 20px;
+}
+
+.place-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.place-item:last-child {
+  border-bottom: none;
+}
+
+.place-marker {
+  width: 24px;
+  height: 24px;
+  background: linear-gradient(135deg, #ff6b6b 0%, #ff8e8e 100%);
+  color: white;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
-  border: none;
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 24px;
+  box-shadow: 0 2px 4px rgba(255, 107, 107, 0.3);
 }
+
+.place-info {
+  flex: 1;
+}
+
+.place-name {
+  font-size: 15px;
+  font-weight: 500;
+  color: #202124;
+  margin-bottom: 2px;
+}
+
+.place-coords {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #5f6368;
+}
+
+.place-coords .el-icon {
+  font-size: 12px;
+}
+ 
 
 /* 两栏内容区 */
 .content-columns {
