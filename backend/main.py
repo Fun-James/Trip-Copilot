@@ -251,34 +251,138 @@ def get_amap_api_key():
         raise ValueError("AMAP_API_KEY not found in environment variables")
     return api_key
 
-# 获取地点坐标
-def get_location_coordinates(location: str):
-    """通过地点名称获取经纬度坐标"""
+# POI搜索获取地点坐标
+def get_location_coordinates_poi(location: str, city: Optional[str] = None):
+    """通过POI搜索获取旅游景点的精确坐标"""
+    try:
+        # 添加延迟避免QPS限制（免费版3次/秒）
+        time.sleep(0.4)  # 等待400ms
+        
+        api_key = get_amap_api_key()
+        url = f"https://restapi.amap.com/v3/place/text"
+        
+        # 旅游景点相关的POI类型代码
+        # 110000: 旅游景点类
+        # 120000: 体育休闲服务类 
+        # 130000: 文化场馆类
+        # 140000: 风景名胜
+        # 150000: 商务住宅
+        # 160000: 政府机构及社会团体
+        # 170000: 科教文化服务
+        # 180000: 交通设施服务
+        poi_types = "110000|130000|140000|170000"
+        
+        # 构建POI搜索参数
+        params = {
+            "key": api_key,
+            "keywords": location,
+            "types": poi_types,
+            "extensions": "all",
+            "page": 1,
+            "size": 5  # 获取前5个结果进行筛选
+        }
+        
+        # 如果提供了城市信息，添加城市限定
+        if city:
+            params["city"] = city
+            
+        response = requests.get(url, params=params)
+        data = response.json()
+        
+        if data["status"] == "1" and data["pois"]:
+            # 尝试找到最匹配的POI
+            best_poi = None
+            
+            for poi in data["pois"]:
+                poi_name = poi.get("name", "")
+                poi_type = poi.get("type", "")
+                
+                # 优先选择名称匹配度高的景点
+                if location in poi_name or poi_name in location:
+                    best_poi = poi
+                    break
+            
+            # 如果没有找到匹配的，使用第一个结果
+            if not best_poi:
+                best_poi = data["pois"][0]
+            
+            location_str = best_poi["location"]
+            longitude_str, latitude_str = location_str.split(",")
+            longitude = float(longitude_str)
+            latitude = float(latitude_str)
+            
+            # 打印POI信息用于调试
+            poi_info = {
+                "name": best_poi.get("name", "Unknown"),
+                "type": best_poi.get("type", "Unknown"),
+                "address": best_poi.get("address", ""),
+                "coords": f"({longitude}, {latitude})"
+            }
+            print(f"POI搜索成功: {location} -> {poi_info}")
+            return longitude, latitude
+        else:
+            print(f"POI搜索无结果: {location}")
+            return None, None
+    except Exception as e:
+        print(f"POI搜索失败: {e}")
+        return None, None
+
+# 地理编码获取地点坐标（备用方法）
+def get_location_coordinates_geocode(location: str, city: Optional[str] = None):
+    """通过地理编码获取地点坐标（备用方法）"""
     try:
         # 添加延迟避免QPS限制（免费版3次/秒）
         time.sleep(0.4)  # 等待400ms
         
         api_key = get_amap_api_key()
         url = f"https://restapi.amap.com/v3/geocode/geo"
+        
+        # 构建搜索参数
         params = {
             "key": api_key,
             "address": location
         }
+        
+        # 如果提供了城市信息，添加城市限定
+        if city:
+            params["city"] = city
+            
         response = requests.get(url, params=params)
         data = response.json()
         
         if data["status"] == "1" and data["geocodes"]:
             location_str = data["geocodes"][0]["location"]
             longitude_str, latitude_str = location_str.split(",")
-            # 确保返回浮点数类型
             longitude = float(longitude_str)
             latitude = float(latitude_str)
+            print(f"地理编码成功: {location} -> ({longitude}, {latitude})")
             return longitude, latitude
         else:
+            print(f"地理编码无结果: {location}")
             return None, None
     except Exception as e:
-        print(f"获取坐标失败: {e}")
+        print(f"地理编码失败: {e}")
         return None, None
+
+# 获取地点坐标（优化版本：POI优先 + 地理编码备用）
+def get_location_coordinates(location: str, city: Optional[str] = None):
+    """通过地点名称获取经纬度坐标（POI搜索优先，地理编码备用）"""
+    # 第一步：尝试POI搜索（适合旅游景点）
+    lng, lat = get_location_coordinates_poi(location, city)
+    
+    if lng is not None and lat is not None:
+        return lng, lat
+    
+    # 第二步：如果POI搜索失败，使用地理编码备用
+    print(f"POI搜索失败，尝试地理编码: {location}")
+    lng, lat = get_location_coordinates_geocode(location, city)
+    
+    if lng is not None and lat is not None:
+        return lng, lat
+    
+    # 都失败了
+    print(f"所有搜索方法都失败: {location}")
+    return None, None
 
 # 获取路径规划
 def get_route_planning(start_coords: tuple, end_coords: tuple, mode: str = "driving"):
@@ -542,17 +646,58 @@ async def get_location_info(request: LocationRequest):
     """获取地点的详细信息和坐标"""
     try:
         api_key = get_amap_api_key()
-        url = f"https://restapi.amap.com/v3/geocode/geo"
-        params = {
+        
+        # 首先尝试POI搜索获取更精确的景点信息
+        poi_url = f"https://restapi.amap.com/v3/place/text"
+        poi_params = {
+            "key": api_key,
+            "keywords": request.location,
+            "types": "110000|130000|140000|170000",
+            "extensions": "all",
+            "size": 1
+        }
+        
+        poi_response = requests.get(poi_url, params=poi_params)
+        poi_data = poi_response.json()
+        
+        if poi_data["status"] == "1" and poi_data["pois"]:
+            # 使用POI搜索结果
+            poi = poi_data["pois"][0]
+            location_coords = poi["location"].split(",")
+            
+            location_data = {
+                "name": request.location,
+                "poi_name": poi.get("name", ""),
+                "formatted_address": poi.get("address", ""),
+                "province": poi.get("pname", ""),
+                "city": poi.get("cityname", ""),
+                "district": poi.get("adname", ""),
+                "location": poi["location"],
+                "longitude": float(location_coords[0]),
+                "latitude": float(location_coords[1]),
+                "type": poi.get("type", ""),
+                "tel": poi.get("tel", ""),
+                "business_area": poi.get("business_area", ""),
+                "source": "POI"
+            }
+            
+            return LocationResponse(
+                success=True,
+                location_data=location_data
+            )
+        
+        # 如果POI搜索失败，fallback到地理编码
+        geo_url = f"https://restapi.amap.com/v3/geocode/geo"
+        geo_params = {
             "key": api_key,
             "address": request.location
         }
         
-        response = requests.get(url, params=params)
-        data = response.json()
+        geo_response = requests.get(geo_url, params=geo_params)
+        geo_data = geo_response.json()
         
-        if data["status"] == "1" and data["geocodes"]:
-            geocode = data["geocodes"][0]
+        if geo_data["status"] == "1" and geo_data["geocodes"]:
+            geocode = geo_data["geocodes"][0]
             location_data = {
                 "name": request.location,
                 "formatted_address": geocode.get("formatted_address", ""),
@@ -562,7 +707,8 @@ async def get_location_info(request: LocationRequest):
                 "location": geocode.get("location", ""),
                 "longitude": float(geocode.get("location", "0,0").split(",")[0]),
                 "latitude": float(geocode.get("location", "0,0").split(",")[1]),
-                "level": geocode.get("level", "")
+                "level": geocode.get("level", ""),
+                "source": "Geocode"
             }
             
             return LocationResponse(
@@ -670,7 +816,7 @@ async def get_trip_plan(request: ItineraryPlanRequest):
         1. 为每一天按顺序推荐3-4个逻辑上顺路的地点
         2. 每天都要有一个主题描述
         3. 必须严格按照以下JSON格式返回，不能有任何额外的解释性文字
-        4. 每个地点按照省市区地点的形式输出
+        4. 每个地点按照省市+具体地点名称的形式输出，不要包含区县名称，例如"四川省成都市武侯祠"而不是"四川省成都市武侯区武侯祠"
         
         返回格式示例：
         {{
@@ -700,7 +846,8 @@ async def get_trip_plan(request: ItineraryPlanRequest):
         
         注意：
         - 只返回JSON格式，不要其他任何文字
-        - 地点名称要具体准确，便于地图定位
+        - 地点名称要具体准确，便于地图定位，格式为"省市+景点名称"
+        - 不要包含区县信息，避免定位错误
         - 同一天的地点应该地理位置相对集中，便于游览
         - 每天3-4个地点即可，不要过多
         """
@@ -742,7 +889,22 @@ async def get_trip_plan(request: ItineraryPlanRequest):
                     valid_places = []
                     for place in day_plan["places"]:
                         if "name" in place:
-                            lng, lat = get_location_coordinates(place["name"])
+                            # 尝试从地点名称中提取城市信息
+                            place_name = place["name"]
+                            city_info = None
+                            
+                            # 从目的地中提取城市信息
+                            if request.destination:
+                                # 简单提取：如果目的地包含"市"，则提取城市部分
+                                if "市" in request.destination:
+                                    city_parts = request.destination.split("市")
+                                    if len(city_parts) > 0:
+                                        city_info = city_parts[0] + "市"
+                                elif "省" in request.destination and len(request.destination) > 2:
+                                    # 如果是省份，提取省份信息
+                                    city_info = request.destination
+                            
+                            lng, lat = get_location_coordinates(place_name, city_info)
                             if lng is not None and lat is not None:
                                 # 确保坐标是有效的浮点数
                                 try:
