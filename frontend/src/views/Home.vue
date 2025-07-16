@@ -655,13 +655,22 @@ export default {
             console.log('路径信息更新:', routeInfo.value)
           }
           
-          // 更新地图中心到起点
-          mapCenter.value = {
-            lng: startLng,
-            lat: startLat
+          // 更新地图中心
+          if (isAutoInit) {
+            // 自动初始化时设置地图中心为北京
+            mapCenter.value = {
+              lng: 116.407526,
+              lat: 39.90403
+            }
+            console.log('地图中心设置为北京:', mapCenter.value)
+          } else {
+            // 手动规划时设置地图中心到起点
+            mapCenter.value = {
+              lng: startLng,
+              lat: startLat
+            }
+            console.log('地图中心更新到起点:', mapCenter.value)
           }
-          
-          console.log('地图中心更新:', mapCenter.value)
           
           // 只有非自动初始化时才添加消息到聊天
           if (!isAutoInit) {

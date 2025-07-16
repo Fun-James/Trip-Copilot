@@ -670,6 +670,7 @@ async def get_trip_plan(request: ItineraryPlanRequest):
         1. 为每一天按顺序推荐3-4个逻辑上顺路的地点
         2. 每天都要有一个主题描述
         3. 必须严格按照以下JSON格式返回，不能有任何额外的解释性文字
+        4. 每个地点按照省市区地点的形式输出
         
         返回格式示例：
         {{
