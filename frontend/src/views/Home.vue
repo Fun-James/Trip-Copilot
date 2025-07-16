@@ -593,7 +593,7 @@ export default {
     /**
      * 规划路线
      */
-    const planRoute = async () => {
+    const planRoute = async (isAutoInit = false) => {
       if (!routeForm.value.start.trim() || !routeForm.value.end.trim()) {
         ElMessage.warning('请输入起点和终点')
         return
@@ -663,13 +663,15 @@ export default {
           
           console.log('地图中心更新:', mapCenter.value)
           
-          // 添加路径规划消息到聊天
-          const routeMessage = `路径规划完成：\n从 ${pathData.start_point.name} 到 ${pathData.end_point.name}\n` +
-            `距离：${formatDistance(routeInfo.value.distance)}\n` +
-            `预计时间：${formatDuration(routeInfo.value.duration)}\n` +
-            `出行方式：${getModeText(routeInfo.value.mode)}`
-          
-          addMessage(routeMessage, 'assistant')
+          // 只有非自动初始化时才添加消息到聊天
+          if (!isAutoInit) {
+            const routeMessage = `路径规划完成：\n从 ${pathData.start_point.name} 到 ${pathData.end_point.name}\n` +
+              `距离：${formatDistance(routeInfo.value.distance)}\n` +
+              `预计时间：${formatDuration(routeInfo.value.duration)}\n` +
+              `出行方式：${getModeText(routeInfo.value.mode)}`
+            
+            addMessage(routeMessage, 'assistant')
+          }
           
           ElMessage.success('路径规划成功')
         } else {
@@ -944,8 +946,29 @@ export default {
       }, 0)
     }
 
-    // 组件挂载时加载历史记录
+    // 组件挂载时加载历史记录和自动规划路线
     loadChatHistory()
+    
+    // 自动规划南开大学津南校区到八里台校区的路线
+    const autoInitRoute = async () => {
+      // 设置起点和终点
+      routeForm.value.start = '南开大学津南校区'
+      routeForm.value.end = '南开大学八里台校区'
+      routeForm.value.mode = 'driving'
+      
+      // 初次调用时保持路径规划面板隐藏
+      showRoutePanel.value = false
+      
+      // 延迟一秒后自动调用路径规划，传入 true 表示这是自动初始化
+      setTimeout(async () => {
+        await planRoute(true)
+      }, 1000)
+    }
+    
+    // 在组件挂载后执行自动路线规划
+    nextTick(() => {
+      autoInitRoute()
+    })
 
     return {
       searchQuery,
