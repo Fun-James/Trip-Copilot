@@ -10,9 +10,12 @@
       </div>
       
       <div class="sidebar-content">
-        <div class="sidebar-item new-chat" @click="startNewChat">
-          <el-icon><Edit /></el-icon>
-          <span v-if="sidebarExpanded" class="sidebar-item-text">新对话</span>
+        <div class="sidebar-item new-chat" @click="handleNewChatClick" :class="{ loading: newChatLoading }">
+          <el-icon v-if="!newChatLoading"><Edit /></el-icon>
+          <el-icon v-else class="is-loading"><Loading /></el-icon>
+          <span v-if="sidebarExpanded" class="sidebar-item-text">
+            {{ newChatLoading ? '初始化中...' : '新对话' }}
+          </span>
         </div>
         
         <!-- 历史对话列表 -->
@@ -161,6 +164,21 @@
                   </div>
                 </div>
               </div>
+              
+              <!-- 行程规划状态下的对话消息显示 -->
+              <div v-if="messages.length > 0" class="chat-messages-in-plan">
+                <div class="chat-messages-header">
+                  <h4>对话记录</h4>
+                </div>
+                <div class="chat-messages-list">
+                  <div v-for="message in messages" :key="message.id" class="message-item">
+                    <div :class="['message-bubble', message.type]">
+                      <div class="message-content">{{ message.content }}</div>
+                      <div class="message-time">{{ formatTime(message.timestamp) }}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
             
             <!-- 传统消息显示（兼容旧功能） -->
@@ -171,6 +189,34 @@
                   <div class="message-time">{{ formatTime(message.timestamp) }}</div>
                 </div>
               </div>
+            </div>
+          </div>
+          
+          <!-- 聊天输入框 -->
+          <div class="chat-input-container">
+            <div class="chat-input-wrapper">
+              <el-input
+                v-model="chatInput"
+                type="textarea"
+                :rows="2"
+                placeholder="有关行程的任何问题，我都可以帮您解答..."
+                class="chat-input"
+                @keyup.enter="handleChatSubmit"
+                :disabled="chatLoading"
+                resize="none"
+                maxlength="500"
+                show-word-limit
+              />
+              <el-button
+                type="primary"
+                :icon="ChatLineRound"
+                @click="handleChatSubmit"
+                :loading="chatLoading"
+                class="chat-send-btn"
+                size="small"
+              >
+                发送
+              </el-button>
             </div>
           </div>
         </div>
@@ -286,7 +332,7 @@
 
 <script>
 import { ref, nextTick } from 'vue'
-import { Search, Menu, Edit, Document, MapLocation, Location, ChatLineRound, Star, Refresh, CloseBold, Guide, LocationFilled } from '@element-plus/icons-vue'
+import { Search, Menu, Edit, Document, MapLocation, Location, ChatLineRound, Star, Refresh, CloseBold, Guide, LocationFilled, Loading } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
 import MapDisplay from '@/components/MapDisplay.vue'
@@ -306,6 +352,7 @@ export default {
     CloseBold,
     Guide,
     LocationFilled,
+    Loading,
     MapDisplay
   },
   setup() {
@@ -337,6 +384,11 @@ export default {
     const routeLoading = ref(false)
     const currentRoute = ref(null)
     const routeInfo = ref(null)
+    
+    // 聊天相关数据
+    const chatInput = ref('')
+    const chatLoading = ref(false)
+    const newChatLoading = ref(false) // 新增：新对话加载状态
 
     // 初始化时加载历史对话
     const loadChatHistory = () => {
@@ -357,28 +409,39 @@ export default {
 
       const chatTitle = messages.value[0]?.content?.substring(0, 30) + '...' || '新对话'
       
+      // 准备完整的对话数据，包含地图和行程规划相关数据
+      const chatData = {
+        messages: [...messages.value],
+        itinerary: [...currentItinerary.value],
+        mapCenter: { ...mapCenter.value },
+        // 新增：保存行程规划数据
+        currentPlan: currentPlan.value ? JSON.parse(JSON.stringify(currentPlan.value)) : null,
+        // 新增：保存路径规划数据
+        currentRoute: currentRoute.value ? JSON.parse(JSON.stringify(currentRoute.value)) : null,
+        // 新增：保存当前选中的天数
+        selectedDay: selectedDay.value,
+        // 新增：保存路径规划表单数据
+        routeForm: { ...routeForm.value },
+        // 新增：保存搜索查询
+        searchQuery: searchQuery.value,
+        lastUpdated: Date.now(),
+        title: chatTitle
+      }
+      
       if (currentChatId.value) {
         // 更新现有对话
         const chatIndex = chatHistory.value.findIndex(chat => chat.id === currentChatId.value)
         if (chatIndex !== -1) {
           chatHistory.value[chatIndex] = {
             ...chatHistory.value[chatIndex],
-            messages: [...messages.value],
-            itinerary: [...currentItinerary.value],
-            mapCenter: { ...mapCenter.value },
-            lastUpdated: Date.now(),
-            title: chatTitle
+            ...chatData
           }
         }
       } else {
         // 创建新对话
         const newChat = {
           id: Date.now(),
-          title: chatTitle,
-          messages: [...messages.value],
-          itinerary: [...currentItinerary.value],
-          mapCenter: { ...mapCenter.value },
-          lastUpdated: Date.now()
+          ...chatData
         }
         chatHistory.value.unshift(newChat)
         currentChatId.value = newChat.id
@@ -392,24 +455,118 @@ export default {
       sidebarExpanded.value = !sidebarExpanded.value
     }
 
+    // 处理新对话按钮点击
+    const handleNewChatClick = () => {
+      if (newChatLoading.value) {
+        return // 防止重复点击
+      }
+      startNewChat()
+    }
+
     // 开始新对话
-    const startNewChat = () => {
-      saveCurrentChat()
-      messages.value = []
-      currentItinerary.value = []
-      mapCenter.value = { lng: 116.397428, lat: 39.90923 }
-      currentChatId.value = null
-      searchQuery.value = ''
+    const startNewChat = async () => {
+      newChatLoading.value = true
+      
+      try {
+        // 先保存当前对话
+        saveCurrentChat()
+        
+        // 清空所有状态数据
+        messages.value = []
+        currentItinerary.value = []
+        mapCenter.value = { lng: 116.397428, lat: 39.90923 }
+        currentPlan.value = null
+        currentRoute.value = null
+        selectedDay.value = 1
+        routeForm.value = {
+          start: '',
+          end: '',
+          mode: 'driving'
+        }
+        currentChatId.value = null
+        searchQuery.value = ''
+        tripDuration.value = 3
+        
+        // 通知地图组件清空数据
+        await nextTick()
+        if (mapDisplayRef.value && mapDisplayRef.value.clearAllData) {
+          mapDisplayRef.value.clearAllData()
+        }
+        
+        // 执行路径规划初始化，等待完成
+        try {
+          await reinitializeMapRoute()
+          console.log('新对话初始化完成，路径规划已执行')
+        } catch (err) {
+          console.warn('路径规划初始化失败，但不影响新对话创建:', err)
+        }
+        
+        ElMessage.success('已创建新对话')
+      } catch (error) {
+        console.error('新对话初始化失败:', error)
+        ElMessage.error('新对话初始化失败，请重试')
+      } finally {
+        newChatLoading.value = false
+      }
     }
 
     // 加载指定对话
     const loadChat = (chatId) => {
       const chat = chatHistory.value.find(c => c.id === chatId)
       if (chat) {
+        // 恢复基本聊天数据
         messages.value = [...chat.messages]
         currentItinerary.value = chat.itinerary || []
         mapCenter.value = chat.mapCenter || { lng: 116.397428, lat: 39.90923 }
         currentChatId.value = chatId
+        
+        // 新增：恢复行程规划数据
+        if (chat.currentPlan) {
+          currentPlan.value = JSON.parse(JSON.stringify(chat.currentPlan))
+        } else {
+          currentPlan.value = null
+        }
+        
+        // 新增：恢复路径规划数据
+        if (chat.currentRoute) {
+          currentRoute.value = JSON.parse(JSON.stringify(chat.currentRoute))
+        } else {
+          currentRoute.value = null
+        }
+        
+        // 新增：恢复选中的天数
+        selectedDay.value = chat.selectedDay || 1
+        
+        // 新增：恢复路径规划表单数据
+        if (chat.routeForm) {
+          routeForm.value = { ...chat.routeForm }
+        } else {
+          routeForm.value = {
+            start: '',
+            end: '',
+            mode: 'driving'
+          }
+        }
+        
+        // 新增：恢复搜索查询
+        searchQuery.value = chat.searchQuery || ''
+        
+        // 等待下一个tick后更新地图
+        nextTick(() => {
+          // 如果有行程规划数据，更新地图
+          if (currentPlan.value) {
+            updateMapWithPlan(currentPlan.value)
+          }
+          
+          // 如果有路径数据，在地图上显示
+          if (currentRoute.value && mapDisplayRef.value) {
+            // 让地图组件显示路径
+            if (mapDisplayRef.value.showRoute) {
+              mapDisplayRef.value.showRoute(currentRoute.value)
+            }
+          }
+        })
+        
         scrollToBottom()
       }
     }
@@ -594,7 +751,9 @@ export default {
      */
     const planRoute = async (isAutoInit = false) => {
       if (!routeForm.value.start.trim() || !routeForm.value.end.trim()) {
-        ElMessage.warning('请输入起点和终点')
+        if (!isAutoInit) {
+          ElMessage.warning('请输入起点和终点')
+        }
         return
       }
 
@@ -609,7 +768,9 @@ export default {
 
         if (response.data.success) {
           const pathData = response.data.path_data
-          console.log('收到路径数据:', pathData)
+          if (!isAutoInit) {
+            console.log('收到路径数据:', pathData)
+          }
           
           // 验证路径数据中的坐标
           const startLng = parseFloat(pathData.start_point.longitude)
@@ -623,7 +784,9 @@ export default {
               start: { lng: startLng, lat: startLat },
               end: { lng: endLng, lat: endLat }
             })
-            ElMessage.error('路径数据中包含无效坐标')
+            if (!isAutoInit) {
+              ElMessage.error('路径数据中包含无效坐标')
+            }
             return
           }
           
@@ -651,7 +814,9 @@ export default {
               duration: path.duration,
               mode: pathData.mode
             }
-            console.log('路径信息更新:', routeInfo.value)
+            if (!isAutoInit) {
+              console.log('路径信息更新:', routeInfo.value)
+            }
           }
           
           // 更新地图中心
@@ -661,7 +826,9 @@ export default {
               lng: 116.407526,
               lat: 39.90403
             }
-            console.log('地图中心设置为北京:', mapCenter.value)
+            if (!isAutoInit) {
+              console.log('地图中心设置为北京:', mapCenter.value)
+            }
           } else {
             // 手动规划时设置地图中心到起点
             mapCenter.value = {
@@ -671,7 +838,7 @@ export default {
             console.log('地图中心更新到起点:', mapCenter.value)
           }
           
-          // 只有非自动初始化时才添加消息到聊天
+          // 只有非自动初始化时才添加消息到聊天和显示成功提示
           if (!isAutoInit) {
             const routeMessage = `路径规划完成：\n从 ${pathData.start_point.name} 到 ${pathData.end_point.name}\n` +
               `距离：${formatDistance(routeInfo.value.distance)}\n` +
@@ -679,16 +846,22 @@ export default {
               `出行方式：${getModeText(routeInfo.value.mode)}`
             
             addMessage(routeMessage, 'assistant')
+            ElMessage.success('路径规划成功')
+          } else {
+            // 自动初始化时只在控制台输出
+            console.log('地图路径规划自动初始化成功')
           }
-          
-          ElMessage.success('路径规划成功')
         } else {
           console.error('路径规划失败:', response.data.error_message)
-          ElMessage.error(response.data.error_message || '路径规划失败')
+          if (!isAutoInit) {
+            ElMessage.error(response.data.error_message || '路径规划失败')
+          }
         }
       } catch (error) {
         console.error('路径规划失败:', error)
-        ElMessage.error('路径规划失败，请检查网络连接')
+        if (!isAutoInit) {
+          ElMessage.error('路径规划失败，请检查网络连接')
+        }
       } finally {
         routeLoading.value = false
       }
@@ -742,6 +915,56 @@ export default {
       routeForm.value.end = ''
       addMessage('已清除路径规划', 'assistant')
       ElMessage.success('路径已清除')
+    }
+
+    // 聊天处理函数
+    
+    /**
+     * 处理聊天提交
+     */
+    const handleChatSubmit = async () => {
+      if (!chatInput.value.trim()) {
+        ElMessage.warning('请输入您的问题')
+        return
+      }
+      
+      const userMessage = chatInput.value.trim()
+      chatInput.value = ''
+      chatLoading.value = true
+      
+      // 添加用户消息
+      addMessage(userMessage, 'user')
+      
+      try {
+        // 构建上下文数据
+        const contextData = {
+          currentPlan: currentPlan.value,
+          currentRoute: currentRoute.value,
+          selectedDay: selectedDay.value,
+          routeForm: routeForm.value,
+          searchQuery: searchQuery.value,
+          mapCenter: mapCenter.value
+        }
+        
+        // 发送到AI聊天API
+        const response = await axios.post('http://localhost:8000/api/chat', {
+          message: userMessage,
+          context: JSON.stringify(contextData)
+        })
+        
+        if (response.data.success) {
+          addMessage(response.data.reply, 'assistant')
+        } else {
+          addMessage('抱歉，我暂时无法回答您的问题，请稍后再试。', 'assistant')
+        }
+      } catch (error) {
+        console.error('聊天API调用失败:', error)
+        addMessage('抱歉，服务暂时不可用，请稍后再试。', 'assistant')
+      } finally {
+        chatLoading.value = false
+        // 保存对话到历史记录
+        saveCurrentChat()
+      }
     }
 
     // 处理搜索 - 重构为行程规划
@@ -972,6 +1195,32 @@ export default {
       }, 1000)
     }
     
+    // 新增：重新初始化地图路径规划（用于新对话时）
+    const reinitializeMapRoute = async () => {
+      console.log('开始重新初始化地图路径规划...')
+      
+      // 重置路径规划表单到默认状态
+      routeForm.value.start = '南开大学津南校区'
+      routeForm.value.end = '南开大学八里台校区'
+      routeForm.value.mode = 'driving'
+      
+      // 确保路径规划面板保持隐藏状态
+      showRoutePanel.value = false
+      
+      try {
+        // 等待一小段时间确保地图组件已清空
+        await new Promise(resolve => setTimeout(resolve, 500))
+        
+        // 执行自动路径规划
+        await planRoute(true)
+        
+        console.log('地图路径规划重新初始化完成')
+      } catch (error) {
+        console.error('重新初始化地图路径规划失败:', error)
+        // 即使失败也不显示错误消息，因为这是后台操作
+      }
+    }
+    
     // 在组件挂载后执行自动路线规划
     nextTick(() => {
       autoInitRoute()
@@ -1006,15 +1255,22 @@ export default {
       formatDuration,
       getModeText,
       clearRoute,
+      // 聊天相关
+      chatInput,
+      chatLoading,
+      newChatLoading,
+      handleChatSubmit,
       // 功能函数
       handleSearch,
       formatTime,
       formatDate,
       toggleSidebar,
+      handleNewChatClick,
       startNewChat,
       loadChat,
       deleteChat,
       refreshMap,
+      reinitializeMapRoute,
       // 图标组件
       Search,
       Menu,
@@ -1027,7 +1283,8 @@ export default {
       Refresh,
       CloseBold,
       Guide,
-      LocationFilled
+      LocationFilled,
+      Loading
     }
   }
 }
@@ -1128,6 +1385,18 @@ export default {
 .sidebar-item.new-chat:hover {
   background-color: #d3eddb;
   border-color: #137333;
+}
+
+.sidebar-item.new-chat.loading {
+  background-color: #fff3cd;
+  border-color: #ffc107;
+  cursor: wait;
+}
+
+.sidebar-item.new-chat.loading:hover {
+  background-color: #fff3cd;
+  border-color: #ffc107;
+  transform: none;
 }
 
 .sidebar-item .el-icon {
@@ -1384,6 +1653,52 @@ export default {
   margin-bottom: 4px;
 }
 
+/* 行程规划中的聊天消息样式 */
+.chat-messages-in-plan {
+  margin-top: 20px;
+  border-top: 1px solid #e8eaed;
+  padding-top: 15px;
+}
+
+.chat-messages-header {
+  margin-bottom: 12px;
+}
+
+.chat-messages-header h4 {
+  color: #202124;
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chat-messages-header h4::before {
+  content: "💬";
+  font-size: 16px;
+}
+
+.chat-messages-list {
+  max-height: 200px;
+  overflow-y: auto;
+  padding-right: 8px;
+}
+
+.chat-messages-list .message-item {
+  margin-bottom: 12px;
+}
+
+.chat-messages-list .message-bubble {
+  max-width: 100%;
+  font-size: 13px;
+  padding: 8px 12px;
+}
+
+.chat-messages-list .message-time {
+  font-size: 11px;
+}
+
 .day-theme {
   font-size: 14px;
   opacity: 0.9;
@@ -1610,6 +1925,43 @@ export default {
   flex: 1;
   background-color: #f8f9fa;
   overflow: hidden;
+}
+
+/* 聊天输入框样式 */
+.chat-input-container {
+  border-top: 1px solid #e8eaed;
+  background-color: #ffffff;
+  padding: 12px 15px;
+}
+
+.chat-input-wrapper {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.chat-input {
+  flex: 1;
+}
+
+.chat-input :deep(.el-textarea__inner) {
+  border-radius: 8px;
+  border: 1px solid #e8eaed;
+  resize: none;
+  font-size: 14px;
+  line-height: 1.4;
+  padding: 8px 12px;
+}
+
+.chat-input :deep(.el-textarea__inner):focus {
+  border-color: #1a73e8;
+  box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
+}
+
+.chat-send-btn {
+  flex-shrink: 0;
+  height: 32px;
+  padding: 0 16px;
 }
 
 /* 滚动条样式 */

@@ -664,21 +664,71 @@ async def chat_with_ai(request: ChatRequest):
         # 获取通义千问客户端
         llm = get_tongyi_client()
         
-        # 构建消息
+        # 构建增强的系统提示词，包含地图和行程规划功能描述
         system_prompt = """你是一位专业友好的旅行助手，名叫Trip Copilot。你可以：
 1. 为用户提供旅行建议和规划
 2. 回答关于目的地的问题
 3. 推荐景点、美食、住宿等
 4. 帮助估算旅行费用
-请用友好、专业的语气回复用户。"""
+5. 解释地图上的标记和路径规划
+6. 基于当前行程规划提供建议和修改意见
+7. 解答关于具体景点位置和交通方式的问题
+
+重要提示：
+- 如果用户提到地图、路径、行程或具体景点，请结合提供的背景信息回答
+- 如果背景信息中包含行程规划数据，你可以参考这些信息来回答用户问题
+- 如果用户询问路径或交通，你可以基于已规划的路线给出建议
+- 请用友好、专业的语气回复用户。"""
         
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=request.message)
         ]
         
+        # 增强的上下文处理：解析结构化的背景信息
         if request.context:
-            messages.append(HumanMessage(content=f"背景信息：{request.context}"))
+            try:
+                # 尝试解析上下文为JSON，如果失败则当作普通文本处理
+                import json
+                context_data = json.loads(request.context)
+                
+                # 构建结构化的上下文描述
+                context_parts = []
+                
+                # 处理行程规划数据
+                if "currentPlan" in context_data and context_data["currentPlan"]:
+                    plan = context_data["currentPlan"]
+                    context_parts.append(f"当前行程规划：{plan.get('destination', '未知目的地')}{plan.get('total_days', 'N')}日游")
+                    
+                    if "itinerary" in plan:
+                        context_parts.append("详细安排：")
+                        for day_plan in plan["itinerary"]:
+                            day_places = [place["name"] for place in day_plan.get("places", [])]
+                            context_parts.append(f"第{day_plan['day']}天（{day_plan.get('theme', '主题未定')}）：{' -> '.join(day_places)}")
+                
+                # 处理路径规划数据
+                if "currentRoute" in context_data and context_data["currentRoute"]:
+                    route = context_data["currentRoute"]
+                    start_name = route.get("start_point", {}).get("name", "起点")
+                    end_name = route.get("end_point", {}).get("name", "终点")
+                    mode = route.get("mode", "driving")
+                    mode_text = {"driving": "驾车", "walking": "步行", "transit": "公交"}.get(mode, mode)
+                    context_parts.append(f"当前路径规划：{start_name} → {end_name}（{mode_text}）")
+                
+                # 处理地图中心和选中天数
+                if "selectedDay" in context_data:
+                    context_parts.append(f"当前查看：第{context_data['selectedDay']}天的行程")
+                
+                if context_parts:
+                    enhanced_context = "当前状态：\n" + "\n".join(context_parts)
+                    messages.append(HumanMessage(content=f"背景信息：{enhanced_context}"))
+                else:
+                    # 如果没有结构化数据，使用原始上下文
+                    messages.append(HumanMessage(content=f"背景信息：{request.context}"))
+                    
+            except (json.JSONDecodeError, KeyError):
+                # 如果不是JSON格式或解析失败，当作普通文本处理
+                messages.append(HumanMessage(content=f"背景信息：{request.context}"))
         
         response = llm.invoke(messages)
         

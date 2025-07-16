@@ -1414,9 +1414,34 @@ const drawSimpleDayRoute = (places) => {
   }
 }
 
+/**
+ * 清空所有地图数据
+ * 清除标记、路径等所有可视化元素
+ */
+const clearAllData = () => {
+  try {
+    // 清除所有标记
+    clearMarkers()
+    
+    // 清除路径
+    clearRoute()
+    
+    // 重置地图视野到默认位置
+    if (map.value) {
+      map.value.setCenter([116.397428, 39.90923]) // 北京
+      map.value.setZoom(10)
+    }
+    
+    console.log('地图数据已清空')
+  } catch (error) {
+    console.error('清空地图数据失败:', error)
+  }
+}
+
 // 对外暴露方法
 defineExpose({
-  updateDayRoute
+  updateDayRoute,
+  clearAllData
 })
 </script>
 
