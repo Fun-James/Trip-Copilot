@@ -914,6 +914,58 @@ async def plan_itinerary(request: ItineraryPlanRequest):
             error_message=f"服务器内部错误: {str(e)}"
         )
 
+#新增辅助函数，用于计算两点间的实际交通时间
+def get_transit_time(start_lng, start_lat, end_lng, end_lat, mode="driving"):
+    """使用高德地图API计算两点间的实际交通时间"""
+    try:
+        # 添加延迟避免QPS限制
+        time.sleep(0.4)
+        
+        api_key = get_amap_api_key()
+        origin = f"{start_lng},{start_lat}"
+        destination = f"{end_lng},{end_lat}"
+        
+        # 不同交通方式使用不同的API端点
+        if mode == "walking":
+            url = "https://restapi.amap.com/v3/direction/walking"
+        elif mode == "transit":
+            url = "https://restapi.amap.com/v3/direction/transit/integrated"
+        else:  # 默认为驾车
+            url = "https://restapi.amap.com/v3/direction/driving"
+            
+        params = {
+            "key": api_key,
+            "origin": origin,
+            "destination": destination
+        }
+        
+        response = requests.get(url, params=params)
+        data = response.json()
+        
+        # 解析响应获取交通时间
+        if data.get("status") == "1":
+            if mode == "walking" and data.get("route"):
+                path = data["route"]["paths"][0]
+                duration = int(path["duration"])  # 秒
+            elif mode == "transit" and data.get("route"):
+                # 获取第一条公交路线
+                transit = data["route"]["transits"][0]
+                duration = int(transit["duration"])  # 秒
+            else:  # 驾车模式
+                path = data["route"]["paths"][0]
+                duration = int(path["duration"])  # 秒
+                
+            # 转换为分钟
+            minutes = duration // 60
+            return f"约{minutes}分钟"
+        else:
+            print(f"无法获取交通时间: {data.get('info')}")
+            return "交通时间未知"
+            
+    except Exception as e:
+        print(f"计算交通时间失败: {str(e)}")
+        return "交通时间未知"
+
 # 新增行程规划API
 @app.post("/api/trip/plan", response_model=ItineraryPlanResponse)
 async def get_trip_plan(request: ItineraryPlanRequest):
@@ -931,6 +983,10 @@ async def get_trip_plan(request: ItineraryPlanRequest):
         2. 每天都要有一个主题描述
         3. 必须严格按照以下JSON格式返回，不能有任何额外的解释性文字
         4. 每个地点按照省市+具体地点名称的形式输出，不要包含区县名称，例如"四川省成都市武侯祠"而不是"四川省成都市武侯区武侯祠"
+        5. 为每个地点添加详细介绍
+        6. 为每个地点添加建议停留时间（小时）
+        7. 为每个地点添加前往下一个地点的交通方式和时间
+        8. 添加每天的交通方式概览
         
         返回格式示例：
         {{
@@ -941,18 +997,48 @@ async def get_trip_plan(request: ItineraryPlanRequest):
               "day": 1,
               "theme": "第一天主题描述",
               "places": [
-                {{ "name": "具体地点名称1" }},
-                {{ "name": "具体地点名称2" }},
-                {{ "name": "具体地点名称3" }}
+                {{ "name": "具体地点名称1",
+              "description": "地点详细描述",
+              "duration": 2.5,
+              "transportation": "前往下一个地点的交通方式（步行/公交/地铁）",
+              "transition_time": "约15分钟" 
+              }},
+                {{ "name": "具体地点名称2",
+              "description": "地点详细描述",
+              "duration": 2.0,
+              "transportation": "前往下一个地点的交通方式（步行/公交/地铁）",
+              "transition_time": "约30分钟"  
+              }},
+                {{ "name": "具体地点名称3",
+              "description": "地点详细描述",
+              "duration": 1.5,
+              "transportation": "前往下一个地点的交通方式（步行/公交/地铁）",
+              "transition_time": "约35分钟"  
+              }}
               ]
             }},
             {{
               "day": 2,
               "theme": "第二天主题描述",
               "places": [
-                {{ "name": "具体地点名称4" }},
-                {{ "name": "具体地点名称5" }},
-                {{ "name": "具体地点名称6" }}
+                {{ "name": "具体地点名称4",
+              "description": "地点详细描述",
+              "duration": 2.5,
+              "transportation": "前往下一个地点的交通方式（步行/公交/地铁）",
+              "transition_time": "约15分钟" 
+              }},
+                {{ "name": "具体地点名称5",
+              "description": "地点详细描述",
+              "duration": 2.0,
+              "transportation": "前往下一个地点的交通方式（步行/公交/地铁）",
+              "transition_time": "约30分钟"  
+              }},
+                {{ "name": "具体地点名称6",
+              "description": "地点详细描述",
+              "duration": 1.5,
+              "transportation": "前往下一个地点的交通方式（步行/公交/地铁）",
+              "transition_time": "约35分钟"  
+              }}
               ]
             }}
           ]
@@ -1083,6 +1169,36 @@ async def get_trip_plan(request: ItineraryPlanRequest):
                     
                     print(f"第{day_plan['day']}天：有效地点 {len(valid_places)} 个，成功生成路径 {len(day_plan['routes'])} 条")
         
+        # 在生成行程后添加交通时间计算
+        if "itinerary" in plan_data:
+            for day_plan in plan_data["itinerary"]:
+                if "places" in day_plan and len(day_plan["places"]) > 1:
+                    # 获取当天的交通方式（默认为驾车）
+                    transport_mode = day_plan.get("transportation", "driving")
+                    if transport_mode not in ["driving", "walking", "transit"]:
+                        transport_mode = "driving"
+                    
+                    # 计算地点间的交通时间
+                    for i in range(len(day_plan["places"]) - 1):
+                        start = day_plan["places"][i]
+                        end = day_plan["places"][i + 1]
+                        
+                        # 确保有坐标
+                        if "longitude" in start and "latitude" in start and "longitude" in end and "latitude" in end:
+                            start_lng = start["longitude"]
+                            start_lat = start["latitude"]
+                            end_lng = end["longitude"]
+                            end_lat = end["latitude"]
+                            
+                            # 计算实际交通时间
+                            transit_time = get_transit_time(
+                                start_lng, start_lat, end_lng, end_lat, transport_mode
+                            )
+                            
+                            # 更新地点信息
+                            start["transportation"] = transport_mode
+                            start["transition_time"] = transit_time
+
         return ItineraryPlanResponse(
             success=True,
             plan_data=plan_data

@@ -155,6 +155,32 @@
                       <div class="place-marker">{{ index + 1 }}</div>
                       <div class="place-info">
                         <div class="place-name">{{ place.name }}</div>
+                        
+                        <!-- 新增：详细描述 -->
+                        <div v-if="place.description" class="place-description">
+                          {{ place.description }}
+                        </div>
+            
+                        <!-- 新增：停留时间 -->
+                        <div v-if="place.duration" class="place-duration">
+                          <el-icon><Clock /></el-icon>
+                          建议停留: {{ place.duration }}小时
+                        </div>
+            
+                        <!-- 新增：前往下一个地点的信息 -->
+                        <div v-if="index < dayPlan.places.length - 1" class="place-transition">
+                          <div class="transition-icon">→</div>
+                          <div class="transition-details">
+                            <div class="transition-title">前往下一站:</div>
+                            <div class="transition-info">
+                              <span class="transportation">
+                                {{ getTransportText(place.transportation) }}
+                              </span>
+                              <span class="duration">{{ place.transition_time }}</span>
+                            </div>
+                          </div>
+                        </div>
+                        
                         <div v-if="place.longitude && place.latitude" class="place-coords">
                           <el-icon><LocationFilled /></el-icon>
                           <span>{{ place.latitude.toFixed(4) }}, {{ place.longitude.toFixed(4) }}</span>
@@ -336,6 +362,7 @@ import { Search, Menu, Edit, Document, MapLocation, Location, ChatLineRound, Sta
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
 import MapDisplay from '@/components/MapDisplay.vue'
+import { Clock } from '@element-plus/icons-vue'
 
 export default {
   name: 'Home',
@@ -390,6 +417,16 @@ export default {
     const chatLoading = ref(false)
     const newChatLoading = ref(false) // 新增：新对话加载状态
 
+    //新增获取路径规划方式
+    const getTransportText = (mode) => {
+      const modeMap = {
+        'driving': '驾车',
+        'walking': '步行',
+        'transit': '公交'
+      }
+      return modeMap[mode] || mode
+    }
+    
     // 初始化时加载历史对话
     const loadChatHistory = () => {
       const saved = localStorage.getItem('tripCopilotChatHistory')
@@ -1227,6 +1264,7 @@ export default {
     })
 
     return {
+      getTransportText,
       searchQuery,
       tripDuration,
       messages,
@@ -2131,5 +2169,93 @@ export default {
   .right-column {
     border-radius: 0;
   }
+}
+
+/* 在文档3的Home.vue中添加以下样式 */
+.place-description {
+font-size: 14px;
+color: #5f6368;
+line-height: 1.5;
+margin: 8px 0;
+padding: 8px;
+background-color: #f8f9fa;
+border-radius: 6px;
+}
+
+.place-duration {
+font-size: 13px;
+color: #34a853;
+margin: 6px 0;
+display: flex;
+align-items: center;
+gap: 6px;
+}
+
+.place-transition {
+margin: 12px 0;
+padding: 8px;
+background-color: #e8f0fe;
+border-radius: 6px;
+display: flex;
+align-items: center;
+gap: 8px;
+}
+
+.transition-icon {
+font-size: 18px;
+color: #1a73e8;
+font-weight: bold;
+}
+
+.transition-details {
+flex: 1;
+}
+
+.transition-title {
+font-weight: 600;
+font-size: 13px;
+color: #1a73e8;
+}
+
+.transition-info {
+font-size: 13px;
+color: #5f6368;
+display: flex;
+justify-content: space-between;
+}
+
+.transportation-title {
+margin-bottom: 12px;
+padding: 8px 12px;
+background-color: #e8f5e8;
+border-radius: 6px;
+font-size: 14px;
+color: #137333;
+display: flex;
+align-items: center;
+gap: 8px;
+}
+
+.day-transportation {
+display: flex;
+align-items: center;
+gap: 6px;
+margin-top: 5px;
+font-size: 13px;
+color: #5f6368;
+}
+
+.transition-info {
+  font-size: 13px;
+  color: #5f6368;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.transportation {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 </style>
