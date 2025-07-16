@@ -5,6 +5,8 @@ from typing import Optional, List
 import uvicorn
 import os
 import time
+import re
+import json
 from dotenv import load_dotenv
 from langchain_community.chat_models.tongyi import ChatTongyi
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -81,6 +83,16 @@ class LocationResponse(BaseModel):
     location_data: Optional[dict] = None
     error_message: Optional[str] = None
 
+# 新增：为行程中的地点生成路径规划的请求模型
+class ItineraryRouteRequest(BaseModel):
+    places: List[dict]  # 地点列表，每个地点包含name, longitude, latitude
+    mode: Optional[str] = "driving"  # 出行方式
+
+class ItineraryRouteResponse(BaseModel):
+    success: bool
+    routes_data: Optional[List[dict]] = None
+    error_message: Optional[str] = None
+
 # 根路径
 @app.get("/")
 async def root():
@@ -140,7 +152,6 @@ async def get_trip_suggestions(request: TripRequest):
             ai_content = text_content
         
         # 解析建议列表
-        import re
         lines = str(ai_content).split('\n')
         recommendations = []
         
@@ -210,8 +221,6 @@ async def get_popular_destinations():
             ai_content = text_content
         
         # 尝试解析JSON
-        import json
-        import re
         
         # 提取JSON部分
         json_match = re.search(r'\[.*\]', str(ai_content), re.DOTALL)
@@ -391,6 +400,95 @@ async def get_trip_path(request: PathRequest):
             error_message=f"服务器内部错误: {str(e)}"
         )
 
+# 行程地点间路径规划API
+@app.post("/api/trip/itinerary-routes", response_model=ItineraryRouteResponse)
+async def get_itinerary_routes(request: ItineraryRouteRequest):
+    """为行程中的地点生成相邻地点间的路径规划"""
+    try:
+        if not request.places or len(request.places) < 2:
+            return ItineraryRouteResponse(
+                success=False,
+                error_message="至少需要2个地点才能进行路径规划"
+            )
+        
+        routes = []
+        mode = request.mode or "driving"
+        
+        # 为相邻的地点生成路径规划
+        for i in range(len(request.places) - 1):
+            start_place = request.places[i]
+            end_place = request.places[i + 1]
+            
+            # 验证地点数据
+            if not all(key in start_place for key in ['name', 'longitude', 'latitude']):
+                return ItineraryRouteResponse(
+                    success=False,
+                    error_message=f"地点 {i+1} 缺少必要的坐标信息"
+                )
+                
+            if not all(key in end_place for key in ['name', 'longitude', 'latitude']):
+                return ItineraryRouteResponse(
+                    success=False,
+                    error_message=f"地点 {i+2} 缺少必要的坐标信息"
+                )
+            
+            # 获取路径规划
+            start_coords = (float(start_place['longitude']), float(start_place['latitude']))
+            end_coords = (float(end_place['longitude']), float(end_place['latitude']))
+            
+            route_data = get_route_planning(start_coords, end_coords, mode)
+            
+            if route_data and route_data.get("status") == "1":
+                # 处理路径数据
+                route_info = {
+                    "segment_index": i,
+                    "start_point": {
+                        "name": start_place['name'],
+                        "longitude": float(start_place['longitude']),
+                        "latitude": float(start_place['latitude'])
+                    },
+                    "end_point": {
+                        "name": end_place['name'],
+                        "longitude": float(end_place['longitude']),
+                        "latitude": float(end_place['latitude'])
+                    },
+                    "mode": mode,
+                    "route_info": route_data.get("route", {}),
+                    "success": True
+                }
+            else:
+                # 如果路径规划失败，创建简单路径
+                route_info = {
+                    "segment_index": i,
+                    "start_point": {
+                        "name": start_place['name'],
+                        "longitude": float(start_place['longitude']),
+                        "latitude": float(start_place['latitude'])
+                    },
+                    "end_point": {
+                        "name": end_place['name'],
+                        "longitude": float(end_place['longitude']),
+                        "latitude": float(end_place['latitude'])
+                    },
+                    "mode": mode,
+                    "route_info": None,
+                    "success": False,
+                    "fallback": "simple_line"  # 标记为简单直线连接
+                }
+            
+            routes.append(route_info)
+        
+        return ItineraryRouteResponse(
+            success=True,
+            routes_data=routes
+        )
+        
+    except Exception as e:
+        return ItineraryRouteResponse(
+            success=False,
+            error_message=f"生成行程路径规划失败: {str(e)}"
+        )
+
 # 聊天API
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_with_ai(request: ChatRequest):
@@ -534,7 +632,6 @@ async def plan_itinerary(request: ItineraryPlanRequest):
             ai_content = text_content
         
         # 尝试解析为字典
-        import json
         try:
             plan_data = json.loads(str(ai_content))
         except json.JSONDecodeError:
@@ -560,7 +657,7 @@ async def plan_itinerary(request: ItineraryPlanRequest):
 # 新增行程规划API
 @app.post("/api/trip/plan", response_model=ItineraryPlanResponse)
 async def get_trip_plan(request: ItineraryPlanRequest):
-    """获取完整的行程规划，包含每日详细安排和地点坐标"""
+    """获取完整的行程规划，包含每日详细安排、地点坐标和路径规划数据"""
     try:
         # 获取通义千问客户端
         llm = get_tongyi_client()
@@ -627,8 +724,6 @@ async def get_trip_plan(request: ItineraryPlanRequest):
             ai_content = text_content
         
         # 解析JSON
-        import json
-        import re
         
         # 提取JSON部分
         json_match = re.search(r'\{.*\}', str(ai_content), re.DOTALL)
@@ -638,10 +733,12 @@ async def get_trip_plan(request: ItineraryPlanRequest):
         json_str = json_match.group()
         plan_data = json.loads(json_str)
         
-        # 为每个地点获取坐标
+        # 为每个地点获取坐标并生成路径规划
         if "itinerary" in plan_data:
             for day_plan in plan_data["itinerary"]:
                 if "places" in day_plan:
+                    # 第一步：为每个地点获取坐标
+                    valid_places = []
                     for place in day_plan["places"]:
                         if "name" in place:
                             lng, lat = get_location_coordinates(place["name"])
@@ -651,7 +748,9 @@ async def get_trip_plan(request: ItineraryPlanRequest):
                                     place["longitude"] = float(lng)
                                     place["latitude"] = float(lat)
                                     # 验证坐标范围
-                                    if not (-180 <= place["longitude"] <= 180 and -90 <= place["latitude"] <= 90):
+                                    if (-180 <= place["longitude"] <= 180 and -90 <= place["latitude"] <= 90):
+                                        valid_places.append(place)
+                                    else:
                                         print(f"警告：地点 '{place['name']}' 坐标超出有效范围: ({lng}, {lat})")
                                         place["longitude"] = None
                                         place["latitude"] = None
@@ -663,6 +762,49 @@ async def get_trip_plan(request: ItineraryPlanRequest):
                                 place["longitude"] = None
                                 place["latitude"] = None
                                 print(f"警告：无法获取地点 '{place['name']}' 的坐标")
+                    
+                    # 第二步：为相邻地点生成路径规划数据
+                    day_plan["routes"] = []
+                    if len(valid_places) >= 2:
+                        print(f"第{day_plan['day']}天开始生成 {len(valid_places)-1} 条路径...")
+                        for i in range(len(valid_places) - 1):
+                            start_place = valid_places[i]
+                            end_place = valid_places[i + 1]
+                            
+                            # 获取两地点间的路径规划
+                            try:
+                                route_data = get_route_planning(
+                                    (start_place["longitude"], start_place["latitude"]),
+                                    (end_place["longitude"], end_place["latitude"]),
+                                    "driving"  # 默认使用驾车模式
+                                )
+                                
+                                if route_data and route_data.get("status") == "1":
+                                    # 构建路径数据，参考手动路径规划的数据结构
+                                    route_info = {
+                                        "start_point": {
+                                            "name": start_place["name"],
+                                            "longitude": start_place["longitude"],
+                                            "latitude": start_place["latitude"]
+                                        },
+                                        "end_point": {
+                                            "name": end_place["name"],
+                                            "longitude": end_place["longitude"],
+                                            "latitude": end_place["latitude"]
+                                        },
+                                        "mode": "driving",
+                                        "route_info": route_data.get("route", {}),
+                                        "raw_data": route_data,
+                                        "sequence": i + 1  # 标记这是第几段路径
+                                    }
+                                    day_plan["routes"].append(route_info)
+                                    print(f"✓ 成功生成路径 {i+1}/{len(valid_places)-1}：{start_place['name']} -> {end_place['name']}")
+                                else:
+                                    print(f"✗ 无法生成路径 {i+1}/{len(valid_places)-1}：{start_place['name']} -> {end_place['name']}")
+                            except Exception as e:
+                                print(f"✗ 生成路径时出错 {i+1}/{len(valid_places)-1}：{start_place['name']} -> {end_place['name']}, 错误: {e}")
+                    
+                    print(f"第{day_plan['day']}天：有效地点 {len(valid_places)} 个，成功生成路径 {len(day_plan['routes'])} 条")
         
         return ItineraryPlanResponse(
             success=True,
@@ -681,6 +823,100 @@ async def get_trip_plan(request: ItineraryPlanRequest):
         )
     except Exception as e:
         return ItineraryPlanResponse(
+            success=False,
+            error_message=f"服务器内部错误: {str(e)}"
+        )
+
+# 新增：为行程地点生成路径规划API
+@app.post("/api/trip/routes", response_model=ItineraryRouteResponse)
+async def generate_itinerary_routes(request: ItineraryRouteRequest):
+    """为行程中的地点列表生成相邻地点间的路径规划"""
+    try:
+        if not request.places or len(request.places) < 2:
+            return ItineraryRouteResponse(
+                success=False,
+                error_message="至少需要2个地点才能生成路径规划"
+            )
+        
+        routes = []
+        mode = request.mode or "driving"
+        
+        # 验证所有地点的坐标有效性
+        valid_places = []
+        for place in request.places:
+            if not all(key in place for key in ["name", "longitude", "latitude"]):
+                continue
+            
+            try:
+                lng = float(place["longitude"])
+                lat = float(place["latitude"])
+                
+                # 检查坐标范围
+                if (-180 <= lng <= 180 and -90 <= lat <= 90):
+                    valid_places.append({
+                        "name": place["name"],
+                        "longitude": lng,
+                        "latitude": lat
+                    })
+                else:
+                    print(f"警告：地点 '{place['name']}' 坐标超出有效范围: ({lng}, {lat})")
+            except (ValueError, TypeError):
+                print(f"警告：地点 '{place['name']}' 坐标格式错误")
+                continue
+        
+        if len(valid_places) < 2:
+            return ItineraryRouteResponse(
+                success=False,
+                error_message="没有足够的有效地点生成路径规划"
+            )
+        
+        # 为相邻地点生成路径规划
+        for i in range(len(valid_places) - 1):
+            start_place = valid_places[i]
+            end_place = valid_places[i + 1]
+            
+            try:
+                route_data = get_route_planning(
+                    (start_place["longitude"], start_place["latitude"]),
+                    (end_place["longitude"], end_place["latitude"]),
+                    mode
+                )
+                
+                if route_data and route_data.get("status") == "1":
+                    # 构建路径数据，与手动路径规划保持一致的数据结构
+                    route_info = {
+                        "start_point": {
+                            "name": start_place["name"],
+                            "longitude": start_place["longitude"],
+                            "latitude": start_place["latitude"]
+                        },
+                        "end_point": {
+                            "name": end_place["name"],
+                            "longitude": end_place["longitude"],
+                            "latitude": end_place["latitude"]
+                        },
+                        "mode": mode,
+                        "route_info": route_data.get("route", {}),
+                        "raw_data": route_data,
+                        "sequence": i + 1
+                    }
+                    routes.append(route_info)
+                    print(f"成功生成路径：{start_place['name']} -> {end_place['name']}")
+                else:
+                    print(f"无法生成路径：{start_place['name']} -> {end_place['name']}")
+                    # 即使某段路径失败，也继续处理其他路径
+                    
+            except Exception as e:
+                print(f"生成路径时出错：{start_place['name']} -> {end_place['name']}, 错误: {e}")
+                continue
+        
+        return ItineraryRouteResponse(
+            success=True,
+            routes_data=routes
+        )
+        
+    except Exception as e:
+        return ItineraryRouteResponse(
             success=False,
             error_message=f"服务器内部错误: {str(e)}"
         )

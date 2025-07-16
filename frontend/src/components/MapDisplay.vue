@@ -399,6 +399,59 @@ const resetMapState = () => {
 }
 
 /**
+ * 智能地图重新初始化
+ * 保存现有数据并在重新初始化后恢复
+ */
+const smartReinitializeMap = () => {
+  try {
+    console.log('开始智能重新初始化地图')
+    
+    // 保存现有数据
+    const savedData = {
+      hasRoute: !!routePolyline.value,
+      hasMarkers: markers.value.length > 0,
+      routeData: props.routeData,
+      itineraryData: props.itineraryData
+    }
+    
+    console.log('保存的数据:', savedData)
+    
+    // 执行重新初始化
+    if (reinitializeMap()) {
+      // 延迟恢复数据
+      setTimeout(() => {
+        try {
+          console.log('开始恢复地图数据')
+          
+          // 恢复行程标记
+          if (savedData.hasMarkers && savedData.itineraryData) {
+            console.log('恢复行程标记')
+            updateMapMarkers(savedData.itineraryData)
+          }
+          
+          // 恢复路径
+          if (savedData.hasRoute && savedData.routeData) {
+            console.log('恢复路径数据')
+            drawRoute(savedData.routeData)
+          }
+          
+          console.log('地图数据恢复完成')
+        } catch (restoreError) {
+          console.error('恢复地图数据失败:', restoreError)
+        }
+      }, 1500) // 给地图更多时间完全初始化
+      
+      return true
+    }
+    
+    return false
+  } catch (error) {
+    console.error('智能重新初始化失败:', error)
+    return false
+  }
+}
+
+/**
  * 完全重新初始化地图
  * 当地图状态完全损坏时使用
  */
@@ -507,6 +560,19 @@ const isMapReady = () => {
     
   } catch (error) {
     console.warn('地图状态检查失败:', error)
+    return false
+  }
+}
+
+/**
+ * 更宽松的地图状态检查（仅检查基本可用性）
+ * @returns {boolean} 地图基本是否可用
+ */
+const isMapBasicallyReady = () => {
+  try {
+    return !!(map.value && mapInitialized.value && typeof map.value.setCenter === 'function')
+  } catch (error) {
+    console.warn('基本地图状态检查失败:', error)
     return false
   }
 }
@@ -677,55 +743,17 @@ const drawRoute = async (routeData) => {
       return
     }
 
-    // 先设置地图视野，再添加标记
-    // 计算路径的中心点和合适的缩放级别
-    try {
-      const centerLng = (startLng + endLng) / 2
-      const centerLat = (startLat + endLat) / 2
-      
-      // 计算距离来确定合适的缩放级别
-      const distance = Math.sqrt(
-        Math.pow(endLng - startLng, 2) + Math.pow(endLat - startLat, 2)
-      )
-      
-      // 根据距离设置缩放级别
-      let zoomLevel = 10
-      if (distance < 0.01) {
-        zoomLevel = 14  // 很近的距离
-      } else if (distance < 0.1) {
-        zoomLevel = 12  // 中等距离
-      } else if (distance < 1) {
-        zoomLevel = 10  // 较远距离
+    // 直接添加标记，不调整地图视野（避免与已设置的城市中心冲突）
+    console.log('路径绘制完成，添加起终点标记')
+    
+    // 延迟添加标记，确保路径线已经绘制完成
+    setTimeout(() => {
+      if (isMapBasicallyReady()) {
+        addRouteMarkers(routeData)
       } else {
-        zoomLevel = 8   // 很远的距离
+        console.warn('地图状态异常，跳过标记添加')
       }
-      
-      console.log('设置地图视野:', { 
-        center: [centerLng, centerLat], 
-        zoom: zoomLevel, 
-        distance 
-      })
-      
-      // 使用更安全的方式设置地图视野
-      map.value.setCenter([centerLng, centerLat])
-      map.value.setZoom(zoomLevel)
-      
-      // 等待地图调整完成后再添加标记
-      setTimeout(() => {
-        if (isMapReady()) {
-          addRouteMarkers(routeData)
-        }
-      }, 500)
-      
-    } catch (viewError) {
-      console.error('设置地图视野失败:', viewError)
-      // 直接添加标记，不调整视野
-      setTimeout(() => {
-        if (isMapReady()) {
-          addRouteMarkers(routeData)
-        }
-      }, 200)
-    }
+    }, 300)
 
   } catch (error) {
     console.error('绘制路径失败:', error)
@@ -780,46 +808,17 @@ const drawSimpleRoute = (routeData) => {
       return
     }
     
-    // 调整视野
-    try {
-      const centerLng = (startLng + endLng) / 2
-      const centerLat = (startLat + endLat) / 2
-      
-      // 计算距离来确定合适的缩放级别
-      const distance = Math.sqrt(
-        Math.pow(endLng - startLng, 2) + Math.pow(endLat - startLat, 2)
-      )
-      
-      // 根据距离设置缩放级别
-      let zoomLevel = 10
-      if (distance < 0.01) {
-        zoomLevel = 14
-      } else if (distance < 0.1) {
-        zoomLevel = 12
-      } else if (distance < 1) {
-        zoomLevel = 10
-      } else {
-        zoomLevel = 8
-      }
-      
-      console.log('简单路径设置视野:', { 
-        center: [centerLng, centerLat], 
-        zoom: zoomLevel 
-      })
-      
-      map.value.setCenter([centerLng, centerLat])
-      map.value.setZoom(zoomLevel)
-      
-      // 等待视野调整完成后再添加标记
-      setTimeout(() => {
+    // 直接添加标记，不调整地图视野（保持已设置的城市中心）
+    console.log('简单路径绘制完成，添加起终点标记')
+    
+    // 延迟添加标记，确保路径线已经绘制完成
+    setTimeout(() => {
+      if (isMapBasicallyReady()) {
         addRouteMarkers(routeData)
-      }, 300)
-      
-    } catch (viewError) {
-      console.error('设置简单路径视野失败:', viewError)
-      // 直接添加标记
-      addRouteMarkers(routeData)
-    }
+      } else {
+        console.warn('地图状态异常，跳过标记添加')
+      }
+    }, 200)
   } catch (error) {
     console.error('绘制简单路径失败:', error)
   }
@@ -976,7 +975,10 @@ watch(() => props.itineraryData, (newData) => {
   }
 }, { deep: true })
 
-// 监听中心位置变化
+// 防抖定时器
+let centerUpdateTimer = null
+
+// 监听中心位置变化（添加防抖机制）
 watch(() => props.centerLocation, (newCenter) => {
   if (map.value && newCenter) {
     console.log('监听到中心位置变化:', newCenter)
@@ -990,49 +992,54 @@ watch(() => props.centerLocation, (newCenter) => {
       return
     }
     
-    console.log('设置地图中心到:', { lng, lat })
+    // 清除之前的定时器，实现防抖
+    if (centerUpdateTimer) {
+      clearTimeout(centerUpdateTimer)
+    }
     
-    try {
-      // 在设置中心前，先检查地图状态
-      if (!isMapReady()) {
-        console.warn('地图状态异常，尝试重新初始化')
-        if (reinitializeMap()) {
-          // 重新初始化后，延迟设置中心点
-          setTimeout(() => {
-            if (map.value && mapInitialized.value) {
-              try {
-                map.value.setCenter([lng, lat])
-                console.log('重新初始化后设置中心成功')
-              } catch (retryError) {
-                console.error('重新初始化后设置中心仍然失败:', retryError)
-              }
-            }
-          }, 1000)
-        }
-        return
-      }
-      
+    // 延迟执行地图中心更新，避免频繁操作
+    centerUpdateTimer = setTimeout(() => {
+      updateMapCenterSafely(lng, lat)
+    }, 150) // 150ms 防抖
+  }
+})
+
+// 安全地更新地图中心
+const updateMapCenterSafely = (lng, lat) => {
+  if (!map.value || !mapInitialized.value) {
+    console.log('地图未准备好，跳过中心点更新')
+    return
+  }
+  
+  console.log('设置地图中心到:', { lng, lat })
+  
+  try {
+    // 使用基本的地图状态检查（更宽松）
+    if (isMapBasicallyReady()) {
       map.value.setCenter([lng, lat])
-    } catch (error) {
-      console.error('设置地图中心失败:', error)
-      // 如果设置失败，尝试重新初始化地图
-      console.warn('尝试重新初始化地图以修复问题')
-      if (reinitializeMap()) {
-        // 重新初始化后，延迟设置中心点
-        setTimeout(() => {
-          if (map.value && mapInitialized.value) {
-            try {
-              map.value.setCenter([lng, lat])
-              console.log('重新初始化后设置中心成功')
-            } catch (retryError) {
-              console.error('重新初始化后设置中心仍然失败:', retryError)
-            }
-          }
-        }, 1000)
-      }
+      console.log('地图中心设置成功')
+    } else {
+      console.warn('地图基本状态检查失败，跳过中心点设置')
+    }
+  } catch (error) {
+    console.error('设置地图中心失败:', error)
+    
+    // 只在严重错误时才考虑重新初始化
+    if (error.message && (
+      error.message.includes('destroyed') || 
+      error.message.includes('disposed') ||
+      error.message.includes('not initialized')
+    )) {
+      console.warn('地图实例可能已损坏，考虑重新初始化')
+      // 使用智能重新初始化，会保护现有数据
+      setTimeout(() => {
+        smartReinitializeMap()
+      }, 500)
+    } else {
+      console.warn('地图中心设置失败，但保留现有地图内容（错误可能是临时的）')
     }
   }
-}, { deep: true })
+}
 
 // 监听路径数据变化
 watch(() => props.routeData, async (newRouteData, oldRouteData) => {
@@ -1199,13 +1206,29 @@ const updateDayRoute = async (places, day) => {
       await drawDayRoute(validPlaces)
     }
     
-    // 调整地图视野以包含所有地点
-    if (validPlaces.length > 0) {
-      const bounds = new AMap.Bounds()
-      validPlaces.forEach(place => {
-        bounds.extend([place.longitude, place.latitude])
-      })
-      map.value.setBounds(bounds, false, [20, 20, 20, 20])
+    // 只有在没有其他路径规划数据时才调整地图视野
+    // 避免与已有的城市中心设置冲突
+    if (validPlaces.length > 0 && !props.routeData) {
+      // 使用 setTimeout 将 setBounds 操作推迟到下一个事件循环
+      // 这给了地图充足的时间来渲染新添加的标记和路线
+      setTimeout(() => {
+        // 在执行前再次检查地图实例，确保其未被销毁
+        if (map.value && isMapBasicallyReady()) {
+          try {
+            console.log('调整地图视野以显示所有地点 (延迟后执行)');
+            const bounds = new AMap.Bounds();
+            validPlaces.forEach(place => {
+              bounds.extend([place.longitude, place.latitude]);
+            });
+            // 最后的 [20, 20, 20, 20] 代表上、下、左、右的边距（padding）
+            map.value.setBounds(bounds, false, [60, 60, 60, 60]);
+          } catch (e) {
+            console.error('延迟执行 setBounds 时发生错误:', e);
+          }
+        }
+      }, 100); // 100毫秒的延迟通常足以解决渲染时序问题
+    } else {
+      console.log('保持现有地图视野（已有路径数据或城市中心）');
     }
     
   } catch (error) {
@@ -1223,16 +1246,152 @@ const drawDayRoute = async (places) => {
   console.log('开始绘制当天路线，地点数据:', places)
   
   try {
+    // 清除之前的路线
+    clearRoute()
+    
+    // 调用后端API获取路径规划
+    const response = await fetch('http://localhost:8000/api/trip/itinerary-routes', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        places: places.map(place => ({
+          name: place.name,
+          longitude: place.longitude,
+          latitude: place.latitude
+        })),
+        mode: 'driving' // 可以根据需要修改出行方式
+      })
+    })
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+    
+    const routeResult = await response.json()
+    console.log('后端路径规划结果:', routeResult)
+    
+    if (!routeResult.success || !routeResult.routes_data) {
+      console.warn('后端路径规划失败，使用简单连线:', routeResult.error_message)
+      drawSimpleDayRoute(places)
+      return
+    }
+    
+    // 收集所有路径点
+    const allPathPoints = []
+    let hasValidRoute = false
+    
+    // 处理每个路径段
+    for (const routeSegment of routeResult.routes_data) {
+      const startPoint = [routeSegment.start_point.longitude, routeSegment.start_point.latitude]
+      
+      // 如果是第一个路径段，添加起点
+      if (allPathPoints.length === 0) {
+        allPathPoints.push(startPoint)
+      }
+      
+      // 如果有详细路径信息，解析路径点
+      if (routeSegment.success && routeSegment.route_info && routeSegment.route_info.paths) {
+        const path = routeSegment.route_info.paths[0]
+        if (path && path.steps) {
+          // 解析路径步骤中的坐标点
+          for (const step of path.steps) {
+            if (step.polyline && typeof step.polyline === 'string') {
+              try {
+                const polylinePoints = step.polyline.split(';')
+                for (const point of polylinePoints) {
+                  if (point && point.includes(',')) {
+                    const parts = point.split(',')
+                    if (parts.length >= 2) {
+                      const lng = parseFloat(parts[0].trim())
+                      const lat = parseFloat(parts[1].trim())
+                      
+                      if (isValidCoordinate(lng, lat)) {
+                        allPathPoints.push([lng, lat])
+                      }
+                    }
+                  }
+                }
+              } catch (e) {
+                console.warn('解析polyline失败:', e)
+              }
+            }
+          }
+          hasValidRoute = true
+        }
+      } else {
+        // 如果没有详细路径信息，添加直线连接
+        console.log(`路径段 ${routeSegment.segment_index} 无详细路径，使用直线`)
+      }
+      
+      // 添加终点
+      const endPoint = [routeSegment.end_point.longitude, routeSegment.end_point.latitude]
+      allPathPoints.push(endPoint)
+    }
+    
+    // 去重相邻重复点
+    const uniquePoints = []
+    allPathPoints.forEach((point, index) => {
+      if (index === 0 || 
+          Math.abs(point[0] - allPathPoints[index - 1][0]) > 0.0001 || 
+          Math.abs(point[1] - allPathPoints[index - 1][1]) > 0.0001) {
+        uniquePoints.push(point)
+      }
+    })
+    
+    console.log(`处理完成: 路径点数 ${uniquePoints.length}, 有效路径: ${hasValidRoute}`)
+    
+    if (uniquePoints.length < 2) {
+      console.warn('路径点数量不足，使用简单连线')
+      drawSimpleDayRoute(places)
+      return
+    }
+    
+    // 创建路径线
+    const polyline = new AMap.Polyline({
+      path: uniquePoints,
+      strokeColor: hasValidRoute ? '#1890ff' : '#ff9800', // 真实路径用蓝色，回退路径用橙色
+      strokeWeight: 4,
+      strokeOpacity: 0.8,
+      strokeStyle: hasValidRoute ? 'solid' : 'dashed', // 真实路径用实线，回退路径用虚线
+      lineJoin: 'round',
+      lineCap: 'round'
+    })
+    
+    // 添加到地图
+    map.value.add(polyline)
+    routePolyline.value = polyline
+    
+    console.log(`当天路线绘制完成，使用${hasValidRoute ? '真实道路路径' : '混合路径（部分直线）'}`)
+    
+  } catch (error) {
+    console.error('调用后端路径规划API失败:', error)
+    console.log('回退到简单连线模式')
+    drawSimpleDayRoute(places)
+  }
+}
+
+/**
+ * 绘制简单的当天路线（回退方案）
+ * @param {Array} places - 地点列表
+ */
+const drawSimpleDayRoute = (places) => {
+  if (!map.value || places.length < 2) return
+  
+  console.log('绘制简单当天路线')
+  
+  try {
     // 构建路径点
     const waypoints = places.map(place => [place.longitude, place.latitude])
     
-    // 直接使用坐标绘制简单连线（避免调用高德路径规划API）
+    // 使用坐标绘制简单连线
     const polyline = new AMap.Polyline({
       path: waypoints,
-      strokeColor: '#1890ff',
+      strokeColor: '#ff6b6b', // 红色表示简单路径
       strokeWeight: 4,
       strokeOpacity: 0.8,
-      strokeStyle: 'solid',
+      strokeStyle: 'dashed', // 虚线样式
       lineJoin: 'round',
       lineCap: 'round'
     })
@@ -1244,10 +1403,10 @@ const drawDayRoute = async (places) => {
     map.value.add(polyline)
     routePolyline.value = polyline
     
-    console.log('当天路线绘制完成，使用直线连接')
+    console.log('简单路线绘制完成，使用直线连接')
     
   } catch (error) {
-    console.error('绘制当天路线失败:', error)
+    console.error('绘制简单当天路线失败:', error)
     console.error('错误详情:', {
       message: error.message,
       stack: error.stack
