@@ -224,7 +224,6 @@
                 <el-radio-group v-model="routeForm.mode" size="small">
                   <el-radio-button value="driving">驾车</el-radio-button>
                   <el-radio-button value="walking">步行</el-radio-button>
-                  <el-radio-button value="transit">公交</el-radio-button>
                 </el-radio-group>
               </div>
               
@@ -728,8 +727,7 @@ export default {
     const getModeText = (mode) => {
       const modeMap = {
         'driving': '驾车',
-        'walking': '步行',
-        'transit': '公交'
+        'walking': '步行'
       }
       return modeMap[mode] || mode
     }

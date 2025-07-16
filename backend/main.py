@@ -251,6 +251,34 @@ def get_amap_api_key():
         raise ValueError("AMAP_API_KEY not found in environment variables")
     return api_key
 
+# 从地点名称中提取城市信息
+def extract_city_from_location(location: str):
+    """从地点名称中提取城市信息"""
+    # 常见城市列表
+    major_cities = [
+        "北京", "上海", "广州", "深圳", "杭州", "南京", "成都", "西安", 
+        "重庆", "武汉", "天津", "苏州", "青岛", "长沙", "大连", "厦门",
+        "福州", "哈尔滨", "济南", "昆明", "沈阳", "石家庄", "合肥", 
+        "郑州", "太原", "南昌", "贵阳", "南宁", "海口", "兰州", "银川",
+        "西宁", "乌鲁木齐", "拉萨", "呼和浩特"
+    ]
+    
+    # 先检查是否直接包含城市名
+    for city in major_cities:
+        if city in location:
+            return city
+    
+    # 如果没有找到，尝试从大学名称等推断
+    if "南开大学" in location:
+        return "天津"
+    elif "清华大学" in location or "北京大学" in location:
+        return "北京"
+    elif "复旦大学" in location or "上海交通大学" in location:
+        return "上海"
+    
+    # 默认返回全国
+    return "全国"
+
 # POI搜索获取地点坐标
 def get_location_coordinates_poi(location: str, city: Optional[str] = None):
     """通过POI搜索获取旅游景点的精确坐标"""
@@ -385,7 +413,7 @@ def get_location_coordinates(location: str, city: Optional[str] = None):
     return None, None
 
 # 获取路径规划
-def get_route_planning(start_coords: tuple, end_coords: tuple, mode: str = "driving"):
+def get_route_planning(start_coords: tuple, end_coords: tuple, mode: str = "driving", start_location: str = "", end_location: str = ""):
     """获取两点间的路径规划"""
     try:
         # 添加延迟避免QPS限制（免费版3次/秒）
@@ -395,15 +423,49 @@ def get_route_planning(start_coords: tuple, end_coords: tuple, mode: str = "driv
         origin = f"{start_coords[0]},{start_coords[1]}"
         destination = f"{end_coords[0]},{end_coords[1]}"
         
-        url = f"https://restapi.amap.com/v3/direction/{mode}"
-        params = {
-            "key": api_key,
-            "origin": origin,
-            "destination": destination
-        }
+        # 根据出行方式选择不同的API端点
+        if mode == "transit":
+            # 公交路径规划使用不同的API
+            url = "https://restapi.amap.com/v3/direction/transit/integrated"
+            
+            # 尝试从地点名称中提取城市
+            start_city = extract_city_from_location(start_location)
+            end_city = extract_city_from_location(end_location)
+            
+            # 如果起点和终点在同一个城市，使用该城市；否则使用全国
+            if start_city != "全国" and end_city != "全国" and start_city == end_city:
+                city = start_city
+            elif start_city != "全国":
+                city = start_city
+            elif end_city != "全国":
+                city = end_city
+            else:
+                city = "全国"
+            
+            params = {
+                "key": api_key,
+                "origin": origin,
+                "destination": destination,
+                "city": city,  # 使用智能提取的城市
+                "cityd": city  # 目的地城市，公交通常在同一城市内
+            }
+        else:
+            # 驾车和步行使用原来的API
+            url = f"https://restapi.amap.com/v3/direction/{mode}"
+            params = {
+                "key": api_key,
+                "origin": origin,
+                "destination": destination
+            }
         
         response = requests.get(url, params=params)
         data = response.json()
+        
+        # 打印调试信息
+        print(f"路径规划请求: {mode}, URL: {url}")
+        if mode == "transit":
+            print(f"使用城市: {params['city']}")
+        print(f"响应状态: {data.get('status')}, 信息: {data.get('info')}")
         
         return data
     except Exception as e:
@@ -462,7 +524,9 @@ async def get_trip_path(request: PathRequest):
         route_data = get_route_planning(
             (start_lng, start_lat), 
             (end_lng, end_lat), 
-            mode
+            mode,
+            request.start,  # 传递起点名称
+            request.end     # 传递终点名称
         )
         
         if not route_data or route_data.get("status") != "1":
