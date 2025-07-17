@@ -91,135 +91,118 @@
 
       <!-- 两栏内容区 -->
       <div class="content-columns">
-        <!-- 左侧栏 - 行程规划文字描述 -->
+        <!-- 左侧栏 - 行程规划/对话记录切换 -->
         <div class="left-column itinerary-panel">
-          <div class="panel-header">
-            <h3>
-              <el-icon><Document /></el-icon>
-              旅行规划
-            </h3>
+          <div class="panel-header" style="display: flex; align-items: center; justify-content: space-between;">
+            <el-button-group>
+              <el-button :type="activeTab === 'plan' ? 'primary' : 'default'" @click="activeTab = 'plan'">
+                <el-icon><Document /></el-icon> 旅行规划
+              </el-button>
+              <el-button :type="activeTab === 'chat' ? 'primary' : 'default'" @click="activeTab = 'chat'">
+                <el-icon><ChatLineRound /></el-icon> 对话记录
+              </el-button>
+            </el-button-group>
           </div>
-          
           <div class="messages-container" ref="messagesContainer">
-            <!-- 欢迎界面 -->
-            <div v-if="!currentPlan && messages.length === 0" class="welcome-message">
-              <div class="welcome-icon">
-                <el-icon><Location /></el-icon>
-              </div>
-              <h2>欢迎使用 Trip Copilot</h2>
-              <p>您的智能旅行助手，为您规划完美的旅程</p>
-              <div class="feature-tips">
-                <div class="tip-item">
-                  <el-icon><ChatLineRound /></el-icon>
-                  <span>智能行程规划</span>
+            <!-- 旅行规划内容 -->
+            <template v-if="activeTab === 'plan'">
+              <div v-if="!currentPlan" class="welcome-message">
+                <div class="welcome-icon">
+                  <el-icon><Location /></el-icon>
                 </div>
-                <div class="tip-item">
-                  <el-icon><MapLocation /></el-icon>
-                  <span>地图可视化</span>
-                </div>
-                <div class="tip-item">
-                  <el-icon><Star /></el-icon>
-                  <span>个性化推荐</span>
-                </div>
-              </div>
-            </div>
-            
-            <!-- 结构化行程显示 -->
-            <div v-if="currentPlan" class="itinerary-display">
-              <div class="itinerary-header">
-                <h3>{{ currentPlan.destination }}{{ currentPlan.total_days }}日游</h3>
-                <div class="itinerary-summary">
-                  <span>共{{ currentPlan.total_days }}天</span>
-                  <span>{{ getTotalPlaces() }}个景点</span>
-                </div>
-              </div>
-              
-              <div class="itinerary-days">
-                <div 
-                  v-for="dayPlan in currentPlan.itinerary" 
-                  :key="dayPlan.day"
-                  :class="['day-item', { active: selectedDay === dayPlan.day }]"
-                  @click="selectDay(dayPlan.day)"
-                >
-                  <div class="day-header">
-                    <div class="day-number">第{{ dayPlan.day }}天</div>
-                    <div class="day-theme">{{ dayPlan.theme }}</div>
+                <h2>欢迎使用 Trip Copilot</h2>
+                <p>您的智能旅行助手，为您规划完美的旅程</p>
+                <div class="feature-tips">
+                  <div class="tip-item">
+                    <el-icon><ChatLineRound /></el-icon>
+                    <span>智能行程规划</span>
                   </div>
-                  
-                  <div class="day-places">
-                    <div 
-                      v-for="(place, index) in dayPlan.places" 
-                      :key="index"
-                      class="place-item"
-                    >
-                      <div class="place-marker">{{ index + 1 }}</div>
-                      <div class="place-info">
-                        <div class="place-name">{{ place.name }}</div>
-                        
-                        <!-- 新增：详细描述 -->
-                        <div v-if="place.description" class="place-description">
-                          {{ place.description }}
-                        </div>
-            
-                        <!-- 新增：停留时间 -->
-                        <div v-if="place.duration" class="place-duration">
-                          <el-icon><Clock /></el-icon>
-                          建议停留: {{ place.duration }}小时
-                        </div>
-            
-                        <!-- 新增：前往下一个地点的信息 -->
-                        <div v-if="index < dayPlan.places.length - 1" class="place-transition">
-                          <div class="transition-icon">→</div>
-                          <div class="transition-details">
-                            <div class="transition-title">前往下一站:</div>
-                            <div class="transition-info">
-                              <span class="transportation">
-                                {{ getTransportText(place.transportation) }}
-                              </span>
-                              <span class="duration">{{ place.transition_time }}</span>
+                  <div class="tip-item">
+                    <el-icon><MapLocation /></el-icon>
+                    <span>地图可视化</span>
+                  </div>
+                  <div class="tip-item">
+                    <el-icon><Star /></el-icon>
+                    <span>个性化推荐</span>
+                  </div>
+                </div>
+              </div>
+              <div v-if="currentPlan" class="itinerary-display">
+                <div class="itinerary-header">
+                  <h3>{{ currentPlan.destination }}{{ currentPlan.total_days }}日游</h3>
+                  <div class="itinerary-summary">
+                    <span>共{{ currentPlan.total_days }}天</span>
+                    <span>{{ getTotalPlaces() }}个景点</span>
+                  </div>
+                </div>
+                <div class="itinerary-days">
+                  <div 
+                    v-for="dayPlan in currentPlan.itinerary" 
+                    :key="dayPlan.day"
+                    :class="['day-item', { active: selectedDay === dayPlan.day }]"
+                    @click="selectDay(dayPlan.day)"
+                  >
+                    <div class="day-header">
+                      <div class="day-number">第{{ dayPlan.day }}天</div>
+                      <div class="day-theme">{{ dayPlan.theme }}</div>
+                    </div>
+                    <div class="day-places">
+                      <div 
+                        v-for="(place, index) in dayPlan.places" 
+                        :key="index"
+                        class="place-item"
+                      >
+                        <div class="place-marker">{{ index + 1 }}</div>
+                        <div class="place-info">
+                          <div class="place-name">{{ place.name }}</div>
+                          <div v-if="place.description" class="place-description">
+                            {{ place.description }}
+                          </div>
+                          <div v-if="place.duration" class="place-duration">
+                            <el-icon><Clock /></el-icon>
+                            建议停留: {{ place.duration }}小时
+                          </div>
+                          <div v-if="index < dayPlan.places.length - 1" class="place-transition">
+                            <div class="transition-icon">→</div>
+                            <div class="transition-details">
+                              <div class="transition-title">前往下一站:</div>
+                              <div class="transition-info">
+                                <span class="transportation">
+                                  {{ getTransportText(place.transportation) }}
+                                </span>
+                                <span class="duration">{{ place.transition_time }}</span>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                        
-                        <div v-if="place.longitude && place.latitude" class="place-coords">
-                          <el-icon><LocationFilled /></el-icon>
-                          <span>{{ place.latitude.toFixed(4) }}, {{ place.longitude.toFixed(4) }}</span>
+                          <div v-if="place.longitude && place.latitude" class="place-coords">
+                            <el-icon><LocationFilled /></el-icon>
+                            <span>{{ place.latitude.toFixed(4) }}, {{ place.longitude.toFixed(4) }}</span>
+                          </div>
                         </div>
                       </div>
                     </div>
                   </div>
                 </div>
               </div>
-              
-              <!-- 行程规划状态下的对话消息显示 -->
-              <div v-if="messages.length > 0" class="chat-messages-in-plan">
-                <div class="chat-messages-header">
-                  <h4>对话记录</h4>
-                </div>
-                <div class="chat-messages-list">
-                  <div v-for="message in messages" :key="message.id" class="message-item">
-                    <div :class="['message-bubble', message.type]">
-                      <div class="message-content">{{ message.content }}</div>
-                      <div class="message-time">{{ formatTime(message.timestamp) }}</div>
-                    </div>
+            </template>
+            <!-- 对话记录内容 -->
+            <template v-else-if="activeTab === 'chat'">
+              <div class="chat-messages-header">
+                <h4>对话记录</h4>
+              </div>
+              <div class="chat-messages-list">
+                <div v-if="messages.length === 0" style="color: #888; padding: 24px 0; text-align: center;">暂无对话记录</div>
+                <div v-for="message in messages" :key="message.id" class="message-item">
+                  <div :class="['message-bubble', message.type]">
+                    <div class="message-content">{{ message.content }}</div>
+                    <div class="message-time">{{ formatTime(message.timestamp) }}</div>
                   </div>
                 </div>
               </div>
-            </div>
-            
-            <!-- 传统消息显示（兼容旧功能） -->
-            <div v-if="!currentPlan && messages.length > 0">
-              <div v-for="message in messages" :key="message.id" class="message-item">
-                <div :class="['message-bubble', message.type]">
-                  <div class="message-content">{{ message.content }}</div>
-                  <div class="message-time">{{ formatTime(message.timestamp) }}</div>
-                </div>
-              </div>
-            </div>
+            </template>
           </div>
-          
-          <!-- 聊天输入框 -->
-          <div class="chat-input-container">
+          <!-- 聊天输入框只在对话tab下显示 -->
+          <div class="chat-input-container" v-if="activeTab === 'chat'">
             <div class="chat-input-wrapper">
               <el-input
                 v-model="chatInput"
@@ -392,6 +375,8 @@ export default {
     const chatHistory = ref([])
     const currentChatId = ref(null)
     const mapDisplayRef = ref(null)
+    // 新增：tab切换
+    const activeTab = ref('plan') // 'plan' or 'chat'
 
     // 地图相关数据
     const currentItinerary = ref([])
@@ -1322,7 +1307,8 @@ export default {
       CloseBold,
       Guide,
       LocationFilled,
-      Loading
+      Loading,
+      activeTab
     }
   }
 }
@@ -1718,8 +1704,6 @@ export default {
 }
 
 .chat-messages-list {
-  max-height: 200px;
-  overflow-y: auto;
   padding-right: 8px;
 }
 
