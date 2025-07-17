@@ -191,11 +191,22 @@
                 <h4>对话记录</h4>
               </div>
               <div class="chat-messages-list">
-                <div v-if="messages.length === 0" style="color: #888; padding: 24px 0; text-align: center;">暂无对话记录</div>
-                <div v-for="message in messages" :key="message.id" class="message-item">
-                  <div :class="['message-bubble', message.type]">
-                    <div class="message-content">{{ message.content }}</div>
-                    <div class="message-time">{{ formatTime(message.timestamp) }}</div>
+                <div v-if="messages.length === 0" style="color: #888; padding: 12px 0; text-align: center;">暂无对话记录</div>
+                <div v-for="message in messages" :key="message.id" class="message-item" style="margin-bottom: 4px;">
+                  <div
+                    :class="['message-bubble', message.type]"
+                    :style="message.type === 'user'
+                      ? 'max-width: 92%; margin-left: auto; margin-right: 18px; padding: 14px 16px; background-color: #1a73e8; color: #fff; text-align: right;'
+                      : 'max-width: 92%; margin-left: 18px; margin-right: auto; padding: 12px 14px; background-color: #f8f9fa; color: #202124; text-align: left;'"
+                  >
+                    <div
+                      class="message-content"
+                      v-html="renderMarkdown(message.content)"
+                      :style="message.type === 'user'
+                        ? 'font-size: 13px; line-height: 1.6; margin: 1px 0 1px 0;'
+                        : 'font-size: 13px; line-height: 1.18; margin: 0px 0 0px 0;'"
+                    ></div>
+                    <div class="message-time" style="font-size: 11px; margin-top: 3px;">{{ formatTime(message.timestamp) }}</div>
                   </div>
                 </div>
               </div>
@@ -346,6 +357,7 @@ import { ElMessage } from 'element-plus'
 import axios from 'axios'
 import MapDisplay from '@/components/MapDisplay.vue'
 import { Clock } from '@element-plus/icons-vue'
+import { marked } from 'marked'
 
 export default {
   name: 'Home',
@@ -1248,6 +1260,10 @@ export default {
       autoInitRoute()
     })
 
+    const renderMarkdown = (text) => {
+      return marked.parse(text || '')
+    }
+    
     return {
       getTransportText,
       searchQuery,
@@ -1308,7 +1324,8 @@ export default {
       Guide,
       LocationFilled,
       Loading,
-      activeTab
+      activeTab,
+      renderMarkdown
     }
   }
 }
