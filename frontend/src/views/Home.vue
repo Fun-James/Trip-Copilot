@@ -165,7 +165,7 @@
                         :key="index"
                         class="place-item"
                       >
-                        <div class="place-marker">{{ index + 1 }}</div>
+                        <div :class="['place-marker', index === 0 ? 'start-marker' : '']">{{ index + 1 }}</div>
                         <div class="place-info">
                           <div class="place-name">{{ place.name }}</div>
                           <div v-if="place.description" class="place-description">
@@ -402,15 +402,17 @@ export default {
     // 在组件挂载时加载聊天历史和获取用户位置
     onMounted(() => {
       loadChatHistory()
-      
-      // 等待高德地图API加载完成后获取用户位置
+      // 优先尝试获取用户位置，失败时再用北京
+      const setDefaultBeijing = () => {
+        mapCenter.value = { lng: 116.397428, lat: 39.90923, zoom: 12 }
+      }
       if (typeof AMap !== 'undefined') {
-        getUserLocation()
+        getUserLocation(setDefaultBeijing)
       } else {
-        // 如果高德地图API尚未加载，等待加载完成后再获取位置
         window.loadAmapScript().then(() => {
-          getUserLocation()
+          getUserLocation(setDefaultBeijing)
         }).catch(error => {
+          setDefaultBeijing()
           console.error('加载高德地图API失败:', error)
         })
       }
@@ -460,52 +462,48 @@ export default {
     const currentItinerary = ref([])
     const mapCenter = ref({ lng: 116.397428, lat: 39.90923 }) // 默认北京
     
-    // 获取用户当前位置并设置为地图中心点
-    const getUserLocation = () => {
+    // 获取用户当前位置并设置为地图中心点，失败时回调 fallbackFn
+    const getUserLocation = (fallbackFn) => {
       if (typeof AMap === 'undefined') {
         console.error('高德地图API未加载，无法获取用户位置')
+        if (typeof fallbackFn === 'function') fallbackFn()
         return
       }
-      
       try {
         const geolocation = new AMap.Geolocation({
-          enableHighAccuracy: true, // 是否使用高精度定位，默认:true
-          timeout: 10000,           // 超时时间，默认：无穷大
-          maximumAge: 0,            // 定位结果缓存0毫秒，默认：0
-          convert: true,            // 自动偏移坐标，偏移后的坐标为高德坐标，默认：true
-          showButton: false,        // 显示定位按钮，默认：true
-          buttonPosition: 'LB',     // 定位按钮停靠位置，默认：'LB'，左下角
-          buttonOffset: new AMap.Pixel(10, 20), // 定位按钮与设置的停靠位置的偏移量，默认：Pixel(10, 20)
-          showMarker: false,        // 定位成功后在定位到的位置显示点标记，默认：true
-          showCircle: false,        // 定位成功后用圆圈表示定位精度范围，默认：true
-          panToLocation: false,     // 定位成功后将定位到的位置作为地图中心点，默认：true
-          zoomToAccuracy: false     // 定位成功后调整地图视野范围使定位位置及精度范围视野内可见，默认：false
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 0,
+          convert: true,
+          showButton: false,
+          buttonPosition: 'LB',
+          buttonOffset: new AMap.Pixel(10, 20),
+          showMarker: false,
+          showCircle: false,
+          panToLocation: false,
+          zoomToAccuracy: false
         })
-        
         geolocation.getCurrentPosition((status, result) => {
           if (status === 'complete') {
             // 定位成功，更新地图中心点
             const position = result.position
-            console.log('获取用户当前位置成功:', position)
-            
-            // 更新地图中心点
             mapCenter.value = {
               lng: position.lng,
-              lat: position.lat
+              lat: position.lat,
+              zoom: 14 // 用户定位时更高缩放
             }
-            
-            // 获取城市信息
             const cityInfo = result.addressComponent
             if (cityInfo && cityInfo.city) {
               console.log('当前城市:', cityInfo.city)
             }
-            
           } else {
-            // 定位失败，使用默认位置（北京）
+            // 定位失败，调用回退
+            if (typeof fallbackFn === 'function') fallbackFn()
             console.warn('获取用户位置失败:', result.message)
           }
         })
       } catch (error) {
+        if (typeof fallbackFn === 'function') fallbackFn()
         console.error('获取用户位置时发生错误:', error)
       }
     }
@@ -1352,7 +1350,7 @@ export default {
     const autoInitRoute = async () => {
       // 设置起点和终点
       routeForm.value.start = '南开大学津南校区'
-      routeForm.value.end = '南开大学八里台校区'
+      routeForm.value.end = '南开大学津南校区'
       routeForm.value.mode = 'driving'
       
       // 初次调用时保持路径规划面板隐藏
@@ -1370,7 +1368,7 @@ export default {
       
       // 重置路径规划表单到默认状态
       routeForm.value.start = '南开大学津南校区'
-      routeForm.value.end = '南开大学八里台校区'
+      routeForm.value.end = '南开大学津南校区'
       routeForm.value.mode = 'driving'
       
       // 确保路径规划面板保持隐藏状态
@@ -1938,6 +1936,12 @@ export default {
   font-weight: 600;
   min-width: 24px;
   box-shadow: 0 2px 4px rgba(255, 107, 107, 0.3);
+  position: relative;
+}
+
+.start-marker {
+  z-index: 10;
+  position: relative;
 }
 
 .place-info {

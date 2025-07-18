@@ -67,7 +67,7 @@ const initMap = () => {
   try {
     // 创建地图实例
     map.value = new AMap.Map('amap-container', {
-      zoom: 12,
+      zoom: 10.5,
       center: [props.centerLocation.lng, props.centerLocation.lat],
       mapStyle: 'amap://styles/normal', // 标准地图样式
       viewMode: '2D',
@@ -874,7 +874,8 @@ const addRouteMarkers = (routeData) => {
           image: 'https://webapi.amap.com/theme/v1.3/markers/n/start.png',
           size: new AMap.Size(25, 34),
           imageSize: new AMap.Size(25, 34)
-        })
+        }),
+        zIndex: 120
       })
 
       // 为起点标记添加信息窗口
@@ -904,7 +905,8 @@ const addRouteMarkers = (routeData) => {
           image: 'https://webapi.amap.com/theme/v1.3/markers/n/end.png',
           size: new AMap.Size(25, 34),
           imageSize: new AMap.Size(25, 34)
-        })
+        }),
+        zIndex: 110
       })
 
       // 为终点标记添加信息窗口
