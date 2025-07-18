@@ -399,9 +399,21 @@ export default {
     const messages = ref([])
     const loading = ref(false)
     
-    // 在组件挂载时加载聊天历史
+    // 在组件挂载时加载聊天历史和获取用户位置
     onMounted(() => {
       loadChatHistory()
+      
+      // 等待高德地图API加载完成后获取用户位置
+      if (typeof AMap !== 'undefined') {
+        getUserLocation()
+      } else {
+        // 如果高德地图API尚未加载，等待加载完成后再获取位置
+        window.loadAmapScript().then(() => {
+          getUserLocation()
+        }).catch(error => {
+          console.error('加载高德地图API失败:', error)
+        })
+      }
     })
     const messagesContainer = ref(null)
     const sidebarExpanded = ref(false)
@@ -419,7 +431,15 @@ export default {
       // 重置所有状态
       messages.value = []
       currentItinerary.value = []
-      mapCenter.value = { lng: 116.397428, lat: 39.90923 }
+      
+      // 尝试获取用户当前位置作为地图中心点
+      if (typeof AMap !== 'undefined') {
+        getUserLocation()
+      } else {
+        // 如果无法获取位置，使用默认位置（北京）
+        mapCenter.value = { lng: 116.397428, lat: 39.90923 }
+      }
+      
       currentPlan.value = null
       currentRoute.value = null
       selectedDay.value = 1
@@ -439,6 +459,56 @@ export default {
     // 地图相关数据
     const currentItinerary = ref([])
     const mapCenter = ref({ lng: 116.397428, lat: 39.90923 }) // 默认北京
+    
+    // 获取用户当前位置并设置为地图中心点
+    const getUserLocation = () => {
+      if (typeof AMap === 'undefined') {
+        console.error('高德地图API未加载，无法获取用户位置')
+        return
+      }
+      
+      try {
+        const geolocation = new AMap.Geolocation({
+          enableHighAccuracy: true, // 是否使用高精度定位，默认:true
+          timeout: 10000,           // 超时时间，默认：无穷大
+          maximumAge: 0,            // 定位结果缓存0毫秒，默认：0
+          convert: true,            // 自动偏移坐标，偏移后的坐标为高德坐标，默认：true
+          showButton: false,        // 显示定位按钮，默认：true
+          buttonPosition: 'LB',     // 定位按钮停靠位置，默认：'LB'，左下角
+          buttonOffset: new AMap.Pixel(10, 20), // 定位按钮与设置的停靠位置的偏移量，默认：Pixel(10, 20)
+          showMarker: false,        // 定位成功后在定位到的位置显示点标记，默认：true
+          showCircle: false,        // 定位成功后用圆圈表示定位精度范围，默认：true
+          panToLocation: false,     // 定位成功后将定位到的位置作为地图中心点，默认：true
+          zoomToAccuracy: false     // 定位成功后调整地图视野范围使定位位置及精度范围视野内可见，默认：false
+        })
+        
+        geolocation.getCurrentPosition((status, result) => {
+          if (status === 'complete') {
+            // 定位成功，更新地图中心点
+            const position = result.position
+            console.log('获取用户当前位置成功:', position)
+            
+            // 更新地图中心点
+            mapCenter.value = {
+              lng: position.lng,
+              lat: position.lat
+            }
+            
+            // 获取城市信息
+            const cityInfo = result.addressComponent
+            if (cityInfo && cityInfo.city) {
+              console.log('当前城市:', cityInfo.city)
+            }
+            
+          } else {
+            // 定位失败，使用默认位置（北京）
+            console.warn('获取用户位置失败:', result.message)
+          }
+        })
+      } catch (error) {
+        console.error('获取用户位置时发生错误:', error)
+      }
+    }
     
     // 新增：行程规划相关数据
     const currentPlan = ref(null) // 当前行程规划数据
@@ -560,7 +630,15 @@ export default {
         // 清空所有状态数据
         messages.value = []
         currentItinerary.value = []
-        mapCenter.value = { lng: 116.397428, lat: 39.90923 }
+        
+        // 尝试获取用户当前位置作为地图中心点
+        if (typeof AMap !== 'undefined') {
+          getUserLocation()
+        } else {
+          // 如果无法获取位置，使用默认位置（北京）
+          mapCenter.value = { lng: 116.397428, lat: 39.90923 }
+        }
+        
         currentPlan.value = null
         currentRoute.value = null
         selectedDay.value = 1
@@ -907,13 +985,18 @@ export default {
           
           // 更新地图中心
           if (isAutoInit) {
-            // 自动初始化时设置地图中心为北京
-            mapCenter.value = {
-              lng: 116.407526,
-              lat: 39.90403
-            }
-            if (!isAutoInit) {
-              console.log('地图中心设置为北京:', mapCenter.value)
+            // 自动初始化时尝试获取用户当前位置作为地图中心点
+            if (typeof AMap !== 'undefined') {
+              getUserLocation()
+            } else {
+              // 如果无法获取位置，使用默认位置（北京）
+              mapCenter.value = {
+                lng: 116.407526,
+                lat: 39.90403
+              }
+              if (!isAutoInit) {
+                console.log('地图中心设置为北京:', mapCenter.value)
+              }
             }
           } else {
             // 手动规划时设置地图中心到起点
@@ -1330,6 +1413,8 @@ export default {
       currentItinerary,
       mapCenter,
       handleLogout,
+      // 用户位置相关
+      getUserLocation,
       // 行程规划相关
       currentPlan,
       selectedDay,
