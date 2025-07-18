@@ -47,6 +47,19 @@
           </div>
         </div>
       </div>
+      
+      <!-- 底部退出登录按钮 -->
+      <div class="sidebar-footer">
+        <template v-if="sidebarExpanded">
+          <el-button type="danger" @click="handleLogout" class="logout-btn" plain>
+            <el-icon><SwitchButton /></el-icon>
+            退出登录
+          </el-button>
+        </template>
+        <el-button v-else type="danger" @click="handleLogout" class="icon-btn" circle plain>
+          <el-icon><SwitchButton /></el-icon>
+        </el-button>
+      </div>
     </div>
 
     <!-- 主内容区 - 两栏布局 -->
@@ -351,13 +364,14 @@
 </template>
 
 <script>
-import { ref, nextTick } from 'vue'
-import { Search, Menu, Edit, Document, MapLocation, Location, ChatLineRound, Star, Refresh, CloseBold, Guide, LocationFilled, Loading } from '@element-plus/icons-vue'
+import { ref, nextTick, onMounted } from 'vue'
+import { Search, Menu, Edit, Document, MapLocation, Location, ChatLineRound, Star, Refresh, CloseBold, Guide, LocationFilled, Loading, SwitchButton } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
 import MapDisplay from '@/components/MapDisplay.vue'
 import { Clock } from '@element-plus/icons-vue'
 import { marked } from 'marked'
+import { useRouter } from 'vue-router'
 
 export default {
   name: 'Home',
@@ -375,13 +389,20 @@ export default {
     Guide,
     LocationFilled,
     Loading,
-    MapDisplay
+    MapDisplay,
+    SwitchButton
   },
   setup() {
+    const router = useRouter()
     const searchQuery = ref('')
     const tripDuration = ref(3) // 新增：旅行天数
     const messages = ref([])
     const loading = ref(false)
+    
+    // 在组件挂载时加载聊天历史
+    onMounted(() => {
+      loadChatHistory()
+    })
     const messagesContainer = ref(null)
     const sidebarExpanded = ref(false)
     const chatHistory = ref([])
@@ -389,6 +410,31 @@ export default {
     const mapDisplayRef = ref(null)
     // 新增：tab切换
     const activeTab = ref('plan') // 'plan' or 'chat'
+
+    // 退出登录处理函数
+    const handleLogout = () => {
+      // 清除所有用户相关数据
+      localStorage.removeItem('currentUser')
+      
+      // 重置所有状态
+      messages.value = []
+      currentItinerary.value = []
+      mapCenter.value = { lng: 116.397428, lat: 39.90923 }
+      currentPlan.value = null
+      currentRoute.value = null
+      selectedDay.value = 1
+      routeForm.value = {
+        start: '',
+        end: '',
+        mode: 'driving'
+      }
+      currentChatId.value = null
+      searchQuery.value = ''
+      tripDuration.value = 3
+      
+      ElMessage.success('已退出登录')
+      router.push('/auth')
+    }
 
     // 地图相关数据
     const currentItinerary = ref([])
@@ -426,7 +472,10 @@ export default {
     
     // 初始化时加载历史对话
     const loadChatHistory = () => {
-      const saved = localStorage.getItem('tripCopilotChatHistory')
+      const currentUser = localStorage.getItem('currentUser')
+      if (!currentUser) return
+      
+      const saved = localStorage.getItem(`tripCopilotChatHistory_${currentUser}`)
       if (saved) {
         chatHistory.value = JSON.parse(saved)
       }
@@ -434,7 +483,10 @@ export default {
 
     // 保存聊天历史
     const saveChatHistory = () => {
-      localStorage.setItem('tripCopilotChatHistory', JSON.stringify(chatHistory.value))
+      const currentUser = localStorage.getItem('currentUser')
+      if (!currentUser) return
+      
+      localStorage.setItem(`tripCopilotChatHistory_${currentUser}`, JSON.stringify(chatHistory.value))
     }
 
     // 保存当前对话
@@ -1277,6 +1329,7 @@ export default {
       mapDisplayRef,
       currentItinerary,
       mapCenter,
+      handleLogout,
       // 行程规划相关
       currentPlan,
       selectedDay,
@@ -1349,9 +1402,33 @@ export default {
   flex-direction: column;
   padding: 20px 0;
   transition: width 0.3s ease;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: hidden;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
   z-index: 1000;
+}
+
+.sidebar-content {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.sidebar-footer {
+  padding: 20px;
+  border-top: 1px solid #e8eaed;
+  display: flex;
+  justify-content: center;
+}
+
+.logout-btn {
+  width: 100%;
+}
+
+.icon-btn {
+  width: 32px;
+  height: 32px;
+  padding: 6px;
+  font-size: 16px;
 }
 
 .sidebar.expanded {
@@ -1391,6 +1468,7 @@ export default {
   flex-direction: column;
   gap: 15px;
   flex: 1;
+  overflow: hidden;
 }
 
 .sidebar-item {
@@ -1406,6 +1484,8 @@ export default {
   transition: all 0.3s;
   min-height: 44px;
   overflow: hidden;
+  width: auto;
+  min-width: 0;
 }
 
 .sidebar.expanded .sidebar-item {
