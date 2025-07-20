@@ -218,26 +218,50 @@
             </template>
             <!-- 对话记录内容 -->
             <template v-else-if="activeTab === 'chat'">
-              <div class="chat-messages-header">
-                <h4>对话记录</h4>
+              <div v-if="messages.length === 0">
+                <div class="welcome-message">
+                  <div class="welcome-icon">
+                    <el-icon><Location /></el-icon>
+                  </div>
+                  <h2>欢迎使用 Trip Copilot</h2>
+                  <p>您的智能旅行助手，为您规划完美的旅程</p>
+                  <div class="feature-tips">
+                    <div class="tip-item">
+                      <el-icon><ChatLineRound /></el-icon>
+                      <span>智能行程规划</span>
+                    </div>
+                    <div class="tip-item">
+                      <el-icon><MapLocation /></el-icon>
+                      <span>地图可视化</span>
+                    </div>
+                    <div class="tip-item">
+                      <el-icon><Star /></el-icon>
+                      <span>个性化推荐</span>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div class="chat-messages-list">
-                <div v-if="messages.length === 0" style="color: #888; padding: 12px 0; text-align: center;">暂无对话记录</div>
-                <div v-for="message in messages" :key="message.id" class="message-item" style="margin-bottom: 4px;">
-                  <div
-                    :class="['message-bubble', message.type]"
-                    :style="message.type === 'user'
-                      ? 'max-width: 92%; margin-left: auto; margin-right: 18px; padding: 14px 16px; background-color: #1a73e8; color: #fff; text-align: right;'
-                      : 'max-width: 92%; margin-left: 18px; margin-right: auto; padding: 12px 14px; background-color: #f8f9fa; color: #202124; text-align: left;'"
-                  >
+              <div v-else>
+                <div class="chat-messages-header">
+                  <h4>对话记录</h4>
+                </div>
+                <div class="chat-messages-list">
+                  <div v-for="message in messages" :key="message.id" class="message-item" style="margin-bottom: 4px;">
                     <div
-                      class="message-content"
-                      v-html="renderMarkdown(message.content)"
+                      :class="['message-bubble', message.type]"
                       :style="message.type === 'user'
-                        ? 'font-size: 13px; line-height: 1.6; margin: 1px 0 1px 0;'
-                        : 'font-size: 13px; line-height: 1.18; margin: 0px 0 0px 0;'"
-                    ></div>
-                    <div class="message-time" style="font-size: 11px; margin-top: 3px;">{{ formatTime(message.timestamp) }}</div>
+                        ? 'max-width: 92%; margin-left: auto; margin-right: 18px; padding: 14px 16px; background-color: #1a73e8; color: #fff; text-align: right;'
+                        : 'max-width: 92%; margin-left: 18px; margin-right: auto; padding: 12px 14px; background-color: #f8f9fa; color: #202124; text-align: left;'"
+                    >
+                      <div
+                        class="message-content"
+                        v-html="renderMarkdown(message.content)"
+                        :style="message.type === 'user'
+                          ? 'font-size: 13px; line-height: 1.6; margin: 1px 0 1px 0;'
+                          : 'font-size: 13px; line-height: 1.18; margin: 0px 0 0px 0;'"
+                      ></div>
+                      <div class="message-time" style="font-size: 11px; margin-top: 3px;">{{ formatTime(message.timestamp) }}</div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -440,8 +464,8 @@ export default {
     const chatHistory = ref([])
     const currentChatId = ref(null)
     const mapDisplayRef = ref(null)
-    // 新增：tab切换
-    const activeTab = ref('plan') // 'plan' or 'chat'
+    // 新增：tab切换，默认进入对话记录
+    const activeTab = ref('chat') // 'chat' or 'plan'
 
     // 退出登录处理函数
     const handleLogout = () => {
