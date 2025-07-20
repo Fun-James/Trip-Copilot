@@ -108,11 +108,11 @@
         <div class="left-column itinerary-panel">
           <div class="panel-header" style="display: flex; align-items: center; justify-content: space-between;">
             <el-button-group>
-              <el-button :type="activeTab === 'plan' ? 'primary' : 'default'" @click="activeTab = 'plan'">
-                <el-icon><Document /></el-icon> 旅行规划
-              </el-button>
               <el-button :type="activeTab === 'chat' ? 'primary' : 'default'" @click="activeTab = 'chat'">
                 <el-icon><ChatLineRound /></el-icon> 对话记录
+              </el-button>
+              <el-button :type="activeTab === 'plan' ? 'primary' : 'default'" @click="activeTab = 'plan'">
+                <el-icon><Document /></el-icon> 旅行规划
               </el-button>
             </el-button-group>
           </div>
@@ -180,16 +180,34 @@
                             <div class="transition-details">
                               <div class="transition-title">前往下一站:</div>
                               <div class="transition-info">
-                                <span class="transportation">
-                                  {{ getTransportText(place.transportation) }}
-                                </span>
-                                <span class="duration">{{ place.transition_time }}</span>
+                                <div class="transportation-buttons">
+                                  <el-button-group>
+                                    <el-button
+                                      v-for="mode in place.available_transportations"
+                                      :key="mode"
+                                      :type="place.transportation === mode ? 'primary' : 'default'"
+                                      size="small"
+                                      @click="changeTransportation(dayPlan.day, index, mode)"
+                                      style="margin-right: 4px;"
+                                    >
+                                      {{ getTransportText(mode) }}
+                                    </el-button>
+                                  </el-button-group>
+                                </div>
+                                <div class="transportation-details" style="margin-top: 2px;">
+          <div v-if="place.transportation === 'transit'" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <el-tooltip :content="place.route_steps" placement="top">
+              <span class="transit-steps" style="max-width: 320px; white-space: normal; word-break: break-all; display: inline-block;">{{ place.route_steps }}</span>
+            </el-tooltip>
+            <span class="duration">{{ place.transition_time }}</span>
+          </div>
+          <div v-else style="display: flex; align-items: center; gap: 8px;">
+            <span>{{ getTransportText(place.transportation) }}</span>
+            <span class="duration">{{ place.transition_time }}</span>
+          </div>
+                                </div>
                               </div>
                             </div>
-                          </div>
-                          <div v-if="place.longitude && place.latitude" class="place-coords">
-                            <el-icon><LocationFilled /></el-icon>
-                            <span>{{ place.latitude.toFixed(4) }}, {{ place.longitude.toFixed(4) }}</span>
                           </div>
                         </div>
                       </div>
@@ -533,11 +551,48 @@ export default {
       const modeMap = {
         'driving': '驾车',
         'walking': '步行',
+        'bicycling': '骑行',
         'transit': '公交'
       }
       return modeMap[mode] || mode
     }
-    
+    // 新增：改变交通方式
+    const changeTransportation = async (day, placeIndex, newMode) => {
+      try {
+        const dayPlan = currentPlan.value.itinerary.find(d => d.day === day);
+        if (!dayPlan || !dayPlan.places[placeIndex] || !dayPlan.places[placeIndex + 1]) return;
+        
+        const place = dayPlan.places[placeIndex];
+        const nextPlace = dayPlan.places[placeIndex + 1];
+        
+        // 调用API获取新的交通信息
+        const response = await axios.post('http://localhost:8000/api/trip/transportation', {
+          start: {
+            longitude: place.longitude,
+            latitude: place.latitude
+          },
+          end: {
+            longitude: nextPlace.longitude,
+            latitude: nextPlace.latitude
+          },
+          mode: newMode
+        });
+        
+        // 更新交通信息
+        place.transportation = newMode;
+        place.transition_time = response.data.time;
+        place.route_steps = response.data.steps;
+        
+        if (mapDisplayRef.value && mapDisplayRef.value.clearRoute) {
+          mapDisplayRef.value.clearRoute();
+        }
+
+      } catch (error) {
+        console.error('切换交通方式失败:', error);
+        ElMessage.error('切换交通方式失败，请稍后再试');
+      }
+    };
+
     // 初始化时加载历史对话
     const loadChatHistory = () => {
       const currentUser = localStorage.getItem('currentUser')
@@ -1399,6 +1454,7 @@ export default {
     
     return {
       getTransportText,
+      changeTransportation,
       searchQuery,
       tripDuration,
       messages,
@@ -2427,5 +2483,34 @@ color: #5f6368;
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.transit-steps {
+    display: inline-block;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
+    font-weight: 500;
+    color: #1a73e8;
+    cursor: help;
+    border-bottom: 1px dashed #1a73e8;
+}
+
+.transportation-select {
+  margin-bottom: 8px;
+}
+
+.transportation-details {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.duration {
+  margin-left: 8px;
+  font-weight: bold;
+  color: #1a73e8;
 }
 </style>

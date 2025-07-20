@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, SecretStr
+from geopy.distance import geodesic
 from typing import Optional, List
 import uvicorn
 import os
@@ -914,57 +915,253 @@ async def plan_itinerary(request: ItineraryPlanRequest):
             error_message=f"服务器内部错误: {str(e)}"
         )
 
-#新增辅助函数，用于计算两点间的实际交通时间
+def get_transportation_text(mode):
+    """获取交通方式的友好文本"""
+    mode_map = {
+        'driving': '驾车',
+        'walking': '步行',
+        'transit': '公交',
+        'bicycling': '骑行'
+    }
+    return mode_map.get(mode, mode)
+
 def get_transit_time(start_lng, start_lat, end_lng, end_lat, mode="driving"):
-    """使用高德地图API计算两点间的实际交通时间"""
+    """使用高德地图API计算两点间的实际交通时间，并提取换乘路线"""
     try:
-        # 添加延迟避免QPS限制
         time.sleep(0.4)
-        
         api_key = get_amap_api_key()
         origin = f"{start_lng},{start_lat}"
         destination = f"{end_lng},{end_lat}"
         
-        # 不同交通方式使用不同的API端点
-        if mode == "walking":
-            url = "https://restapi.amap.com/v3/direction/walking"
-        elif mode == "transit":
+        # 公交路径规划
+        if mode == "transit":
             url = "https://restapi.amap.com/v3/direction/transit/integrated"
-        else:  # 默认为驾车
-            url = "https://restapi.amap.com/v3/direction/driving"
             
+            # 提取城市信息
+            start_city = extract_city_from_coords(start_lng, start_lat)
+            end_city = extract_city_from_coords(end_lng, end_lat)
+            
+            # 使用智能提取的城市
+            city = start_city if start_city != "全国" else (end_city if end_city != "全国" else "全国")
+            
+            params = {
+                "key": api_key,
+                "origin": origin,
+                "destination": destination,
+                "city": city,
+                "cityd": city,
+                "extensions": "all"  # 获取详细信息
+            }
+        else:  # 其他交通方式
+            if mode == "walking":
+                url = "https://restapi.amap.com/v3/direction/walking"
+            elif mode == "bicycling":  
+                url = "https://restapi.amap.com/v4/direction/bicycling"
+            else:  # 默认为驾车
+                url = "https://restapi.amap.com/v3/direction/driving"
+                
+            params = {
+                "key": api_key,
+                "origin": origin,
+                "destination": destination
+            }
+        
+        response = requests.get(url, params=params)
+        data = response.json()
+        
+        # 处理响应获取交通时间和换乘路线
+        time_str = "交通时间未知"
+        route_steps = []
+        
+        if data.get("status") == "1" or data.get("errcode") == 0:
+            # 公交方式 - 提取换乘路线
+            if mode == "transit" and data.get("route") and data["route"].get("transits"):
+                transit = data["route"]["transits"][0]
+                duration = int(transit["duration"])  # 秒
+                
+                # 提取换乘路线
+                for segment in transit.get("segments", []):
+                    if segment.get("bus"):
+                        buslines = segment["bus"].get("buslines", [])
+                        if buslines:
+                            route_steps.append(buslines[0].get("name", "公交"))
+                    elif segment.get("railway"):
+                        railways = segment["railway"].get("lines", [])
+                        if railways:
+                            route_steps.append(railways[0].get("name", "地铁"))
+                
+                # 转换为更友好的格式
+                minutes = duration // 60
+                if minutes < 60:
+                    time_str = f"{minutes}分钟"
+                else:
+                    hours = minutes // 60
+                    remaining_minutes = minutes % 60
+                    if remaining_minutes > 0:
+                        time_str = f"{hours}小时{remaining_minutes}分钟"
+                    else:
+                        time_str = f"{hours}小时"
+            
+            # 其他交通方式
+            else:
+                if mode == "walking" and data.get("route"):
+                    path = data["route"]["paths"][0]
+                    duration = int(path["duration"])  # 秒
+                elif mode == "bicycling" and data.get("data"):
+                    path = data["data"]["paths"][0]
+                    duration = int(path["duration"])  # 秒
+                else:  # 驾车模式
+                    path = data["route"]["paths"][0]
+                    duration = int(path["duration"])  # 秒
+                
+                # 转换为更友好的格式
+                minutes = duration // 60
+                if minutes < 60:
+                    time_str = f"{minutes}分钟"
+                else:
+                    hours = minutes // 60
+                    remaining_minutes = minutes % 60
+                    if remaining_minutes > 0:
+                        time_str = f"{hours}小时{remaining_minutes}分钟"
+                    else:
+                        time_str = f"{hours}小时"
+        
+        # 对于公交方式，返回时间和换乘路线
+        if mode == "transit":
+            return {
+                "time": time_str,
+                "steps": "->".join(route_steps) if route_steps else "公交"
+            }
+        return {
+            "time": time_str,
+            "steps": get_transportation_text(mode)
+        }
+            
+    except Exception as e:
+        print(f"计算交通时间失败: {str(e)}")
+        return {
+            "time": "交通时间未知",
+            "steps": get_transportation_text(mode)
+        }
+
+# 新增辅助函数：从坐标提取城市
+def extract_city_from_coords(lng, lat):
+    """从坐标反查所在城市"""
+    try:
+        time.sleep(0.4)
+        api_key = get_amap_api_key()
+        url = "https://restapi.amap.com/v3/geocode/regeo"
+        
         params = {
             "key": api_key,
-            "origin": origin,
-            "destination": destination
+            "location": f"{lng},{lat}",
+            "extensions": "base"
         }
         
         response = requests.get(url, params=params)
         data = response.json()
         
-        # 解析响应获取交通时间
-        if data.get("status") == "1":
-            if mode == "walking" and data.get("route"):
-                path = data["route"]["paths"][0]
-                duration = int(path["duration"])  # 秒
-            elif mode == "transit" and data.get("route"):
-                # 获取第一条公交路线
-                transit = data["route"]["transits"][0]
-                duration = int(transit["duration"])  # 秒
-            else:  # 驾车模式
-                path = data["route"]["paths"][0]
-                duration = int(path["duration"])  # 秒
-                
-            # 转换为分钟
-            minutes = duration // 60
-            return f"约{minutes}分钟"
-        else:
-            print(f"无法获取交通时间: {data.get('info')}")
-            return "交通时间未知"
-            
+        if data["status"] == "1" and data.get("regeocode"):
+            address_component = data["regeocode"]["addressComponent"]
+            city = address_component.get("city")
+            if not city:
+                city = address_component.get("province")
+            return city if city else "全国"
+        return "全国"
     except Exception as e:
-        print(f"计算交通时间失败: {str(e)}")
-        return "交通时间未知"
+        print(f"坐标反查城市失败: {e}")
+        return "全国"
+
+def recommend_transportation(start_lng, start_lat, end_lng, end_lat, distance_km):
+    """根据距离和地点特性推荐交通方式"""
+    # 检查起点和终点附近是否有公交/地铁站
+    start_has_transit = has_nearby_transit_station(start_lng, start_lat)
+    end_has_transit = has_nearby_transit_station(end_lng, end_lat)
+    
+    # 默认推荐的交通方式
+    default_mode = "driving"  # 默认驾车
+
+    # 根据条件推荐
+    if start_has_transit and end_has_transit and distance_km > 1:
+        default_mode = "transit"
+    elif distance_km < 1:  # 1公里以内步行
+        default_mode = "walking"
+    elif distance_km < 5:  # 1-5公里骑行
+        default_mode = "bicycling"
+    
+    # 可选交通方式：根据距离和位置特性确定
+    available_modes = []
+    
+    # 驾车总是可用
+    available_modes.append("driving")
+    
+    # 公交：需要两端都有车站
+    if start_has_transit and end_has_transit:
+        available_modes.append("transit")
+    
+    # 步行：短距离可用
+    if distance_km < 5:
+        available_modes.append("walking")
+    
+    # 骑行：中短距离可用
+    if distance_km < 10:
+        available_modes.append("bicycling")
+    
+    return {
+        "default_mode": default_mode,
+        "available_modes": available_modes
+    }
+
+def extract_hours_minutes(time_str):
+    """
+    从字符串中提取小时和分钟
+    
+    参数:
+        time_str (str): 包含时间的字符串，如 "1小时24分钟" 或 "24分钟"
+    
+    返回:
+        tuple: (小时, 分钟)，例如 "1小时24分钟" -> (1, 24)，"24分钟" -> (0, 24)
+    """
+    # 初始化小时和分钟为 0
+    hours = 0
+    minutes = 0
+    
+    # 用正则表达式匹配小时和分钟
+    hours_match = re.search(r'(\d+)小时', time_str)
+    minutes_match = re.search(r'(\d+)分钟', time_str)
+    
+    if hours_match:
+        hours = int(hours_match.group(1))
+    if minutes_match:
+        minutes = int(minutes_match.group(1))
+    
+    return (hours, minutes)
+
+# 新增函数：检查地点附近是否有公交/地铁站
+def has_nearby_transit_station(lng, lat, radius=500):
+    """检查指定坐标附近是否有公交或地铁站"""
+    try:
+        time.sleep(0.4)  # 避免QPS限制
+        api_key = get_amap_api_key()
+        url = "https://restapi.amap.com/v3/place/around"
+        
+        params = {
+            "key": api_key,
+            "location": f"{lng},{lat}",
+            "radius": radius,
+            "types": "150500|150700",  # 公交站|地铁站
+            "offset": 1  # 只需要一个结果即可
+        }
+        
+        response = requests.get(url, params=params)
+        data = response.json()
+        
+        if data["status"] == "1" and data.get("pois") and len(data["pois"]) > 0:
+            return True
+        return False
+    except Exception as e:
+        print(f"检查附近交通站点失败: {e}")
+        return False
 
 # 新增行程规划API
 @app.post("/api/trip/plan", response_model=ItineraryPlanResponse)
@@ -985,8 +1182,7 @@ async def get_trip_plan(request: ItineraryPlanRequest):
         4. 每个地点按照省市+具体地点名称的形式输出，不要包含区县名称，例如"四川省成都市武侯祠"而不是"四川省成都市武侯区武侯祠"
         5. 为每个地点添加详细介绍
         6. 为每个地点添加建议停留时间（小时）
-        7. 为每个地点添加前往下一个地点的交通方式和时间
-        8. 添加每天的交通方式概览
+
         
         返回格式示例：
         {{
@@ -999,21 +1195,15 @@ async def get_trip_plan(request: ItineraryPlanRequest):
               "places": [
                 {{ "name": "具体地点名称1",
               "description": "地点详细描述",
-              "duration": 2.5,
-              "transportation": "前往下一个地点的交通方式（步行/公交/地铁）",
-              "transition_time": "约15分钟" 
+              "duration": 2.5
               }},
                 {{ "name": "具体地点名称2",
               "description": "地点详细描述",
-              "duration": 2.0,
-              "transportation": "前往下一个地点的交通方式（步行/公交/地铁）",
-              "transition_time": "约30分钟"  
+              "duration": 2.0 
               }},
                 {{ "name": "具体地点名称3",
               "description": "地点详细描述",
-              "duration": 1.5,
-              "transportation": "前往下一个地点的交通方式（步行/公交/地铁）",
-              "transition_time": "约35分钟"  
+              "duration": 1.5 
               }}
               ]
             }},
@@ -1024,20 +1214,14 @@ async def get_trip_plan(request: ItineraryPlanRequest):
                 {{ "name": "具体地点名称4",
               "description": "地点详细描述",
               "duration": 2.5,
-              "transportation": "前往下一个地点的交通方式（步行/公交/地铁）",
-              "transition_time": "约15分钟" 
               }},
                 {{ "name": "具体地点名称5",
               "description": "地点详细描述",
-              "duration": 2.0,
-              "transportation": "前往下一个地点的交通方式（步行/公交/地铁）",
-              "transition_time": "约30分钟"  
+              "duration": 2.0  
               }},
                 {{ "name": "具体地点名称6",
               "description": "地点详细描述",
-              "duration": 1.5,
-              "transportation": "前往下一个地点的交通方式（步行/公交/地铁）",
-              "transition_time": "约35分钟"  
+              "duration": 1.5
               }}
               ]
             }}
@@ -1172,32 +1356,41 @@ async def get_trip_plan(request: ItineraryPlanRequest):
         # 在生成行程后添加交通时间计算
         if "itinerary" in plan_data:
             for day_plan in plan_data["itinerary"]:
-                if "places" in day_plan and len(day_plan["places"]) > 1:
-                    # 获取当天的交通方式（默认为驾车）
-                    transport_mode = day_plan.get("transportation", "driving")
-                    if transport_mode not in ["driving", "walking", "transit"]:
-                        transport_mode = "driving"
+                if "places" in day_plan:
+                    # 计算直线距离并推荐交通方式
+                    valid_places = [p for p in day_plan["places"] if "longitude" in p and "latitude" in p]
                     
-                    # 计算地点间的交通时间
-                    for i in range(len(day_plan["places"]) - 1):
-                        start = day_plan["places"][i]
-                        end = day_plan["places"][i + 1]
-                        
-                        # 确保有坐标
-                        if "longitude" in start and "latitude" in start and "longitude" in end and "latitude" in end:
-                            start_lng = start["longitude"]
-                            start_lat = start["latitude"]
-                            end_lng = end["longitude"]
-                            end_lat = end["latitude"]
+                    if len(valid_places) >= 2:
+                        for i in range(len(valid_places) - 1):
+                            start = valid_places[i]
+                            end = valid_places[i + 1]
                             
-                            # 计算实际交通时间
-                            transit_time = get_transit_time(
-                                start_lng, start_lat, end_lng, end_lat, transport_mode
+                            # 计算直线距离（公里）
+                            distance_km = geodesic(
+                                (start["latitude"], start["longitude"]),
+                                (end["latitude"], end["longitude"])
+                            ).kilometers
+                            
+                            # 获取交通方式信息
+                            transportation_info = recommend_transportation(
+                                start["longitude"], start["latitude"],
+                                end["longitude"], end["latitude"],
+                                distance_km
                             )
                             
-                            # 更新地点信息
-                            start["transportation"] = transport_mode
-                            start["transition_time"] = transit_time
+                            # 更新到起点地点
+                            start["transportation"] = transportation_info["default_mode"]
+                            start["available_transportations"] = transportation_info["available_modes"]
+
+                            # 计算交通时间和路线
+                            transit_info = get_transit_time(
+                                start["longitude"], start["latitude"],
+                                end["longitude"], end["latitude"],
+                                mode=start["transportation"]
+                            )
+
+                            start["transition_time"] = transit_info["time"]
+                            start["route_steps"] = transit_info["steps"]
 
         return ItineraryPlanResponse(
             success=True,
@@ -1219,6 +1412,33 @@ async def get_trip_plan(request: ItineraryPlanRequest):
             success=False,
             error_message=f"服务器内部错误: {str(e)}"
         )
+
+# 新增交通方式切换API
+@app.post("/api/trip/transportation")
+async def get_transportation_info(request: dict):
+    """根据起终点和交通方式获取交通信息"""
+    try:
+        start = request.get("start")
+        end = request.get("end")
+        mode = request.get("mode", "driving")
+        
+        if not start or not end:
+            return {"error": "缺少起终点信息"}
+        
+        # 获取交通信息
+        transit_info = get_transit_time(
+            start["longitude"], start["latitude"],
+            end["longitude"], end["latitude"],
+            mode=mode
+        )
+        
+        return {
+            "time": transit_info["time"],
+            "steps": transit_info["steps"]
+        }
+        
+    except Exception as e:
+        return {"error": f"获取交通信息失败: {str(e)}"}
 
 # 新增：为行程地点生成路径规划API
 @app.post("/api/trip/routes", response_model=ItineraryRouteResponse)
