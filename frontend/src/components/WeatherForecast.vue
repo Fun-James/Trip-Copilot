@@ -30,6 +30,18 @@
           <div>白天风力风向: {{ day.daywind }}{{ day.daypower }}</div>
           <div>晚上风力风向: {{ day.nightwind }}{{ day.nightpower }}</div>
         </div>
+       <!-- 出行建议 -->
+        <div class="travel-tips">
+          <div class="tips-header">
+            <el-icon><InfoFilled /></el-icon>
+            <span>出行建议</span>
+          </div>
+          <ul class="tips-list">
+            <li v-for="(tip, tipIndex) in getTravelTips(day.description, day.tempHigh, day.tempLow)" :key="tipIndex">
+              {{ tip }}
+            </li>
+          </ul>
+        </div>
       </div>
     </div>
   </div>
@@ -38,7 +50,7 @@
 <script setup>
 
 import { ref, watch } from 'vue'
-import { Loading, Warning, Sunny, Cloudy, Lightning, Moon } from '@element-plus/icons-vue'
+import { Loading, Warning, Sunny, Cloudy, Lightning, Moon, InfoFilled } from '@element-plus/icons-vue'
 
 const props = defineProps({
   location: {
@@ -68,6 +80,64 @@ const extractCityName = (locationStr) => {
   // 匹配“xxx的xx行程”或“xxx”
   const match = locationStr.match(/([\u4e00-\u9fa5]+)(?:的.*)?$/)
   return match ? match[1] : locationStr
+}
+
+// 根据天气描述生成出行建议
+const getTravelTips = (description, tempHigh, tempLow) => {
+  const tips = []
+  
+  // 根据天气状况生成建议
+  if (description.includes('晴')) {
+    tips.push('紫外线较强，建议涂抹防晒霜')
+    tips.push('外出请戴墨镜和遮阳帽')
+  }
+  
+  if (description.includes('多云') || description.includes('阴')) {
+    tips.push('光线较弱，拍照时注意光线角度')
+    tips.push('气温可能忽高忽低，建议穿着薄外套')
+  }
+  
+  if (description.includes('雨')) {
+    tips.push('出门请携带雨伞')
+    tips.push('注意路滑，请穿防滑鞋')
+    tips.push('建议考虑室内景点')
+  }
+  
+  if (description.includes('雪')) {
+    tips.push('道路可能湿滑，注意安全')
+    tips.push('请穿保暖防水的衣物')
+    tips.push('推荐欣赏雪景或考虑室内景点')
+  }
+  
+  if (description.includes('雾') || description.includes('霾')) {
+    tips.push('能见度低，驾车注意安全')
+    tips.push('建议戴口罩，减少户外活动')
+  }
+  
+  // 根据温度生成建议
+  if (tempHigh && tempHigh >= 30) {
+    tips.push('天气炎热，注意防暑防晒')
+    tips.push('多补充水分，避免中午高温时段外出')
+  } else if (tempHigh && tempHigh >= 25) {
+    tips.push('温度适宜，适合户外活动')
+  }
+  
+  if (tempLow && tempLow <= 10) {
+    tips.push('天气较冷，请注意保暖')
+    tips.push('建议穿着厚外套或冲锋衣')
+  } else if (tempLow && tempLow <= 5) {
+    tips.push('天气寒冷，出行注意保暖')
+    tips.push('建议穿羽绒服或厚外套')
+  }
+  
+  // 如果没有具体建议，返回通用建议
+  if (tips.length === 0) {
+    tips.push('天气适宜，适合游览景点')
+    tips.push('建议携带水和适当零食')
+  }
+  
+  // 随机选择2-3条建议返回
+  return tips.slice(0, Math.min(3, tips.length))
 }
 
 // 获取天气预报数据
@@ -108,14 +178,14 @@ watch(() => props.location, async (newLocation) => {
 .weather-forecast {
   background: linear-gradient(135deg, #f8fbff 0%, #f2f6fa 100%);
   border-radius: 28px;
-  padding: 40px 32px 32px 32px;
-  margin: 36px auto;
+  padding: 50px 40px 40px 40px;
+  margin: 40px auto;
   box-shadow: 0 8px 32px rgba(80,120,200,0.10), 0 2px 12px rgba(0,0,0,0.06), var(--el-box-shadow-lighter);
   border: 1.5px solid #e3eaf2;
-  max-width: 820px;
+  max-width: 1000px;
   width: 100%;
-  min-width: 320px;
-  min-height: 320px;
+  min-width: 400px;
+  min-height: 400px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -161,12 +231,12 @@ watch(() => props.location, async (newLocation) => {
 .forecast-list {
   display: flex;
   flex-direction: row;
-  gap: 28px;
-  padding: 16px 0;
+  gap: 32px;
+  padding: 20px 0;
   width: 100%;
-  max-width: 760px;
+  max-width: 920px;
   margin: 0 auto;
-  justify-content: flex-start;
+  justify-content: center;
   box-sizing: border-box;
   overflow-x: auto;
   /* 横向滚动条样式 */
@@ -176,8 +246,8 @@ watch(() => props.location, async (newLocation) => {
 
 .forecast-item {
   text-align: center;
-  padding: 24px 18px;
-  border-radius: 18px;
+  padding: 28px 20px;
+  border-radius: 20px;
   background: var(--el-fill-color-lighter);
   transition: box-shadow 0.3s, transform 0.3s;
   box-shadow: 0 2px 12px rgba(0,0,0,0.06), var(--el-box-shadow-lighter);
@@ -188,9 +258,9 @@ watch(() => props.location, async (newLocation) => {
   border: 1px solid var(--el-border-color);
   position: relative;
   overflow: hidden;
-  min-width: 160px;
-  max-width: 220px;
-  flex: 1 1 180px;
+  min-width: 180px;
+  max-width: 250px;
+  flex: 1 1 200px;
 }
 
 .forecast-item:hover {
@@ -207,18 +277,18 @@ watch(() => props.location, async (newLocation) => {
 }
 
 .forecast-icon {
-  font-size: 44px;
+  font-size: 52px;
   color: var(--el-color-primary);
-  margin: 18px 0;
+  margin: 20px 0;
   filter: drop-shadow(0 2px 8px rgba(0,0,0,0.08));
 }
 
 .forecast-temp {
-  margin: 10px 0;
+  margin: 12px 0;
   display: flex;
   justify-content: center;
-  gap: 10px;
-  font-size: 18px;
+  gap: 12px;
+  font-size: 20px;
 }
 
 .temp-high {
@@ -266,6 +336,45 @@ watch(() => props.location, async (newLocation) => {
 
 .forecast-details div {
   margin: 4px 0;
+}
+/* 出行建议样式 */
+.travel-tips {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--el-border-color);
+}
+
+.tips-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--el-color-primary);
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.tips-list {
+  list-style-type: none;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.tips-list li {
+  position: relative;
+  padding-left: 12px;
+  margin: 4px 0;
+  line-height: 1.4;
+}
+
+.tips-list li::before {
+  content: "•";
+  position: absolute;
+  left: 0;
+  color: var(--el-color-primary);
 }
 @media (max-width: 900px) {
   .weather-forecast {
