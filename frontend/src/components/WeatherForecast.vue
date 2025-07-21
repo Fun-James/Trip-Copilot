@@ -175,21 +175,21 @@ watch(() => props.location, async (newLocation) => {
 </script>
 
 <style scoped>
-.weather-forecast {
+ .weather-forecast {
   background: linear-gradient(135deg, #f8fbff 0%, #f2f6fa 100%);
-  border-radius: 28px;
-  padding: 50px 40px 40px 40px;
-  margin: 40px auto;
-  box-shadow: 0 8px 32px rgba(80,120,200,0.10), 0 2px 12px rgba(0,0,0,0.06), var(--el-box-shadow-lighter);
-  border: 1.5px solid #e3eaf2;
+  border-radius: 18px;
+  padding: 24px 8px 16px 8px;
+  margin: 16px auto;
+  /* 去掉外边框和阴影 */
+  box-shadow: none;
+  border: none;
   max-width: 1000px;
   width: 100%;
-  min-width: 400px;
-  min-height: 400px;
+  min-width: 320px;
+  min-height: 320px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  transition: box-shadow 0.3s, border-color 0.3s;
   box-sizing: border-box;
 }
 
@@ -246,49 +246,47 @@ watch(() => props.location, async (newLocation) => {
 
 .forecast-item {
   text-align: center;
-  padding: 28px 20px;
-  border-radius: 20px;
+  padding: 16px 8px;
+  border-radius: 16px;
   background: var(--el-fill-color-lighter);
   transition: box-shadow 0.3s, transform 0.3s;
   box-shadow: 0 2px 12px rgba(0,0,0,0.06), var(--el-box-shadow-lighter);
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: flex-start;
   height: 100%;
   border: 1px solid var(--el-border-color);
   position: relative;
   overflow: hidden;
-  min-width: 180px;
-  max-width: 250px;
-  flex: 1 1 200px;
+  min-width: 160px;
+  max-width: 220px;
+  flex: 1 1 160px;
 }
 
 .forecast-item:hover {
-  transform: translateY(-6px) scale(1.03);
-  box-shadow: 0 8px 32px rgba(0,0,0,0.12), var(--el-box-shadow-light);
-  border-color: var(--el-color-primary);
+  /* 鼠标悬停时无浮动和阴影变化 */
 }
 
 .forecast-date {
   font-size: 15px;
   color: var(--el-color-primary);
-  margin-bottom: 10px;
+  margin-bottom: 4px;
   font-weight: 500;
 }
 
 .forecast-icon {
-  font-size: 52px;
+  font-size: 44px;
   color: var(--el-color-primary);
-  margin: 20px 0;
+  margin: 10px 0 4px 0;
   filter: drop-shadow(0 2px 8px rgba(0,0,0,0.08));
 }
 
 .forecast-temp {
-  margin: 12px 0;
+  margin: 4px 0 2px 0;
   display: flex;
   justify-content: center;
-  gap: 12px;
-  font-size: 20px;
+  gap: 8px;
+  font-size: 18px;
 }
 
 .temp-high {
@@ -303,7 +301,7 @@ watch(() => props.location, async (newLocation) => {
 .forecast-desc {
   font-size: 13px;
   color: var(--el-text-color-secondary);
-  margin: 6px 0 2px 0;
+  margin: 2px 0 2px 0;
 }
 
 /* 自定义滚动条样式 */
@@ -328,9 +326,9 @@ watch(() => props.location, async (newLocation) => {
 .forecast-details {
   font-size: 12px;
   color: var(--el-text-color-secondary);
-  margin-top: 10px;
+  margin-top: 4px;
   text-align: center;
-  padding: 0 8px;
+  padding: 0 4px;
   opacity: 0.85;
 }
 
@@ -354,14 +352,27 @@ watch(() => props.location, async (newLocation) => {
   font-weight: 500;
 }
 
-.tips-list {
-  list-style-type: none;
-  padding: 0;
-  margin: 0;
-  text-align: left;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-}
+ .tips-list {
+   list-style-type: none;
+   padding: 0;
+   margin: 0;
+   text-align: left;
+   font-size: 12px;
+   color: var(--el-text-color-secondary);
+   max-height: 72px;
+   overflow-y: auto;
+   scrollbar-width: thin;
+ }
+
+ /* 美化建议滚动条 */
+ .tips-list::-webkit-scrollbar {
+   width: 4px;
+   background: var(--el-fill-color-lighter);
+ }
+ .tips-list::-webkit-scrollbar-thumb {
+   background: var(--el-border-color);
+   border-radius: 2px;
+ }
 
 .tips-list li {
   position: relative;
@@ -378,29 +389,29 @@ watch(() => props.location, async (newLocation) => {
 }
 @media (max-width: 900px) {
   .weather-forecast {
-    padding: 12px 2px;
+    padding: 8px 2px;
     max-width: 100vw;
-    margin: 10px auto;
+    margin: 6px auto;
   }
   .forecast-list {
-    gap: 12px;
-    padding: 8px 0;
+    gap: 8px;
+    padding: 4px 0;
     max-width: 100vw;
     overflow-x: auto;
   }
   .forecast-item {
-    padding: 12px 2px;
-    border-radius: 12px;
-    min-width: 120px;
-    max-width: 180px;
-    flex: 1 1 120px;
+    padding: 8px 2px;
+    border-radius: 10px;
+    min-width: 100px;
+    max-width: 140px;
+    flex: 1 1 100px;
     margin: 0 auto;
   }
   .forecast-icon {
-    font-size: 32px;
+    font-size: 28px;
   }
   .forecast-temp {
-    font-size: 14px;
+    font-size: 12px;
   }
 }
 </style>
