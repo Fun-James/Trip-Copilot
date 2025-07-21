@@ -176,33 +176,6 @@ def get_amap_api_key():
         raise ValueError("AMAP_API_KEY not found in environment variables")
     return api_key
 
-# 从地点名称中提取城市信息
-def extract_city_from_location(location: str):
-    """从地点名称中提取城市信息"""
-    # 常见城市列表
-    major_cities = [
-        "北京", "上海", "广州", "深圳", "杭州", "南京", "成都", "西安", 
-        "重庆", "武汉", "天津", "苏州", "青岛", "长沙", "大连", "厦门",
-        "福州", "哈尔滨", "济南", "昆明", "沈阳", "石家庄", "合肥", 
-        "郑州", "太原", "南昌", "贵阳", "南宁", "海口", "兰州", "银川",
-        "西宁", "乌鲁木齐", "拉萨", "呼和浩特"
-    ]
-    
-    # 先检查是否直接包含城市名
-    for city in major_cities:
-        if city in location:
-            return city
-    
-    # 如果没有找到，尝试从大学名称等推断
-    if "南开大学" in location:
-        return "天津"
-    elif "清华大学" in location or "北京大学" in location:
-        return "北京"
-    elif "复旦大学" in location or "上海交通大学" in location:
-        return "上海"
-    
-    # 默认返回全国
-    return "全国"
 
 # POI搜索获取地点坐标
 def get_location_coordinates_poi(location: str, city: Optional[str] = None):
@@ -354,8 +327,8 @@ def get_route_planning(start_coords: tuple, end_coords: tuple, mode: str = "driv
             url = "https://restapi.amap.com/v3/direction/transit/integrated"
             
             # 尝试从地点名称中提取城市
-            start_city = extract_city_from_location(start_location)
-            end_city = extract_city_from_location(end_location)
+            start_city = extract_city_from_coords(start_coords[0], start_coords[1])
+            end_city = extract_city_from_coords(end_coords[0], end_coords[1])
             
             # 如果起点和终点在同一个城市，使用该城市；否则使用全国
             if start_city != "全国" and end_city != "全国" and start_city == end_city:
