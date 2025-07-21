@@ -427,6 +427,10 @@
                   <span class="label">方式:</span>
                   <span class="value">{{ getModeText(routeInfo.mode) }}</span>
                 </div>
+                 <div class="summary-item" v-if="routeInfo.mode === 'transit'">
+                  <span class="label">预计花费:</span>
+                  <span class="value">{{ routeInfo.cost ? `¥${routeInfo.cost}` : '¥0' }}</span>
+                </div>
               </div>
             </div>
           </div>
@@ -1091,17 +1095,29 @@ export default {
           
           // 更新路径信息
           const routeData = pathData.route_info
-          if (routeData && routeData.paths && routeData.paths.length > 0) {
-            const path = routeData.paths[0]
-            routeInfo.value = {
-              distance: path.distance,
-              duration: path.duration,
-              mode: pathData.mode
+          if (routeData) {
+            if(routeData.paths && routeData.paths.length > 0){
+              const path = routeData.paths[0]
+              routeInfo.value = {
+                distance: path.distance,
+                duration: path.duration,
+                mode: pathData.mode
+              }
+              if (!isAutoInit) {
+                console.log('路径信息更新:', routeInfo.value)
+              }}
+            else if(routeData.transits && routeData.transits.length > 0){
+              const path = routeData.transits[0]
+              routeInfo.value = {
+                distance: routeData.distance,
+                duration: path.duration,
+                cost: path.cost,
+                mode: 'transit'
+              }
+              if (!isAutoInit) {
+                console.log('路径信息更新:', routeInfo.value)
+              }}
             }
-            if (!isAutoInit) {
-              console.log('路径信息更新:', routeInfo.value)
-            }
-          }
           
           // 更新地图中心
           if (isAutoInit) {
