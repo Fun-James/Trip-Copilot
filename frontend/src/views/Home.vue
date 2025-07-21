@@ -108,11 +108,11 @@
         <div class="left-column itinerary-panel">
           <div class="panel-header" style="display: flex; align-items: center; justify-content: space-between;">
             <el-button-group>
-              <el-button :type="activeTab === 'plan' ? 'primary' : 'default'" @click="activeTab = 'plan'">
-                <el-icon><Document /></el-icon> 旅行规划
-              </el-button>
               <el-button :type="activeTab === 'chat' ? 'primary' : 'default'" @click="activeTab = 'chat'">
                 <el-icon><ChatLineRound /></el-icon> 对话记录
+              </el-button>
+              <el-button :type="activeTab === 'plan' ? 'primary' : 'default'" @click="activeTab = 'plan'">
+                <el-icon><Document /></el-icon> 旅行规划
               </el-button>
               <el-button :type="activeTab === 'weather' ? 'primary' : 'default'" @click="activeTab = 'weather'">
                 <el-icon><Sunny /></el-icon> 天气预报
@@ -120,12 +120,89 @@
             </el-button-group>
           </div>
           <div class="messages-container" ref="messagesContainer">
-            <!-- 天气预报内容 -->
-            <template v-if="activeTab === 'weather'">
-              <WeatherForecast :location="searchQuery" />
+            <!-- 对话记录内容 -->
+            <template v-if="activeTab === 'chat'">
+              <div v-if="messages.length === 0">
+                <div class="welcome-message">
+                  <div class="welcome-icon">
+                    <el-icon><Location /></el-icon>
+                  </div>
+                  <h2>欢迎使用 Trip Copilot</h2>
+                  <p>您的智能旅行助手，为您规划完美的旅程</p>
+                  <div class="feature-tips">
+                    <div class="tip-item">
+                      <el-icon><ChatLineRound /></el-icon>
+                      <span>智能对话助手</span>
+                    </div>
+                    <div class="tip-item">
+                      <el-icon><MapLocation /></el-icon>
+                      <span>地图可视化</span>
+                    </div>
+                    <div class="tip-item">
+                      <el-icon><Star /></el-icon>
+                      <span>个性化推荐</span>
+                    </div>
+                  </div>
+                  <div class="usage-examples">
+                    <h4 style="margin: 20px 0 10px 0; color: #606266; font-size: 14px;">💡 试试这样说：</h4>
+                    <div class="example-list">
+                      <div class="example-item" @click="fillExampleText('帮我规划一个北京3天的旅程')">"帮我规划一个北京3天的旅程"</div>
+                      <div class="example-item" @click="fillExampleText('我想去上海玩4天，求推荐行程')">"我想去上海玩4天，求推荐行程"</div>
+                      <div class="example-item" @click="fillExampleText('安排一个成都到重庆的2天行程')">"安排一个成都到重庆的2天行程"</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div v-else>
+                <div class="chat-messages-header">
+                  <h4>对话记录</h4>
+                </div>
+                <div class="chat-messages-list">
+                  <div v-for="message in messages" :key="message.id" class="message-item" style="margin-bottom: 4px;">
+                    <div
+                      :class="['message-bubble', message.type]"
+                      :style="message.type === 'user'
+                        ? 'max-width: 92%; margin-left: auto; margin-right: 18px; padding: 14px 16px; background-color: #1a73e8; color: #fff; text-align: right;'
+                        : 'max-width: 92%; margin-left: 18px; margin-right: auto; padding: 12px 14px; background-color: #f8f9fa; color: #202124; text-align: left;'"
+                    >
+                      <!-- 用户消息内容 -->
+                      <div v-if="message.type === 'user'"
+                        class="message-content"
+                        v-html="renderMarkdown(message.content)"
+                        style="font-size: 13px; line-height: 1.6; margin: 1px 0 1px 0;"
+                      ></div>
+                      
+                      <!-- 助手消息内容 -->
+                      <div v-else class="assistant-message-content">
+                        <!-- 当内容为空且正在加载时显示加载指示器 -->
+                        <div v-if="message.content === '' && chatLoading" class="loading-indicator">
+                          <div class="typing-dots">
+                            <span></span>
+                            <span></span>
+                            <span></span>
+                          </div>
+                          <span class="loading-text">正在思考...</span>
+                        </div>
+                        
+                        <!-- 显示助手回复内容 -->
+                        <div v-else
+                          class="message-content"
+                          v-html="renderMarkdown(message.content)"
+                          style="font-size: 13px; line-height: 1.18; margin: 0px 0 0px 0;"
+                        ></div>
+                        
+                        <!-- 当有内容但仍在加载时显示光标 -->
+                        <span v-if="message.content !== '' && chatLoading" class="typing-cursor">|</span>
+                      </div>
+                      
+                      <div class="message-time" style="font-size: 11px; margin-top: 3px;">{{ formatTime(message.timestamp) }}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </template>
             <!-- 旅行规划内容 -->
-            <template v-if="activeTab === 'plan'">
+            <template v-else-if="activeTab === 'plan'">
               <div v-if="!currentPlan" class="welcome-message">
                 <div class="welcome-icon">
                   <el-icon><Location /></el-icon>
@@ -223,55 +300,9 @@
                 </div>
               </div>
             </template>
-           <!-- 对话记录内容 -->
-            <template v-else-if="activeTab === 'chat'">
-              <div v-if="messages.length === 0">
-                <div class="welcome-message">
-                  <div class="welcome-icon">
-                    <el-icon><Location /></el-icon>
-                  </div>
-                  <h2>欢迎使用 Trip Copilot</h2>
-                  <p>您的智能旅行助手，为您规划完美的旅程</p>
-                  <div class="feature-tips">
-                    <div class="tip-item">
-                      <el-icon><ChatLineRound /></el-icon>
-                      <span>智能行程规划</span>
-                    </div>
-                    <div class="tip-item">
-                      <el-icon><MapLocation /></el-icon>
-                      <span>地图可视化</span>
-                    </div>
-                    <div class="tip-item">
-                      <el-icon><Star /></el-icon>
-                      <span>个性化推荐</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div v-else>
-                <div class="chat-messages-header">
-                  <h4>对话记录</h4>
-                </div>
-                <div class="chat-messages-list">
-                  <div v-for="message in messages" :key="message.id" class="message-item" style="margin-bottom: 4px;">
-                    <div
-                      :class="['message-bubble', message.type]"
-                      :style="message.type === 'user'
-                        ? 'max-width: 92%; margin-left: auto; margin-right: 18px; padding: 14px 16px; background-color: #1a73e8; color: #fff; text-align: right;'
-                        : 'max-width: 92%; margin-left: 18px; margin-right: auto; padding: 12px 14px; background-color: #f8f9fa; color: #202124; text-align: left;'"
-                    >
-                      <div
-                        class="message-content"
-                        v-html="renderMarkdown(message.content)"
-                        :style="message.type === 'user'
-                          ? 'font-size: 13px; line-height: 1.6; margin: 1px 0 1px 0;'
-                          : 'font-size: 13px; line-height: 1.18; margin: 0px 0 0px 0;'"
-                      ></div>
-                      <div class="message-time" style="font-size: 11px; margin-top: 3px;">{{ formatTime(message.timestamp) }}</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
+            <!-- 天气预报内容 -->
+            <template v-else-if="activeTab === 'weather'">
+              <WeatherForecast :location="searchQuery" />
             </template>
           </div>
           <!-- 聊天输入框只在对话tab下显示 -->
@@ -281,7 +312,7 @@
                 v-model="chatInput"
                 type="textarea"
                 :rows="2"
-                placeholder="有关行程的任何问题，我都可以帮您解答..."
+                placeholder="您可以直接说：帮我规划一个北京3天的旅程，或询问任何旅行相关问题..."
                 class="chat-input"
                 @keyup.enter="handleChatSubmit"
                 :disabled="chatLoading"
@@ -476,7 +507,7 @@ export default {
     const currentChatId = ref(null)
     const mapDisplayRef = ref(null)
     // 新增：tab切换
-    const activeTab = ref('plan') // 'plan' or 'chat'
+    const activeTab = ref('chat') // 'chat', 'plan' or 'weather' - 默认选中对话记录
 
     // 退出登录处理函数
     const handleLogout = () => {
@@ -1179,7 +1210,138 @@ export default {
     // 聊天处理函数
     
     /**
-     * 处理聊天提交
+     * 填充示例文本到输入框
+     */
+    const fillExampleText = (text) => {
+      chatInput.value = text
+      // 自动聚焦到输入框
+      nextTick(() => {
+        const chatInputEl = document.querySelector('.chat-input textarea')
+        if (chatInputEl) {
+          chatInputEl.focus()
+        }
+      })
+    }
+    
+    /**
+     * 智能解析用户的旅行规划请求
+     */
+    const parseTravelRequest = (message) => {
+      // 使用正则表达式和关键词匹配来识别旅行规划请求
+      const planKeywords = ['规划', '计划', '安排', '行程', '旅行', '旅游', '去', '玩', '游览', '自由行']
+      const dayKeywords = ['天', '日', '星期', '周']
+      
+      // 检查是否包含规划关键词
+      const hasPlanKeyword = planKeywords.some(keyword => message.includes(keyword))
+      
+      if (!hasPlanKeyword) {
+        return null
+      }
+      
+      // 提取目的地
+      let destination = null
+      
+      // 匹配 "去XX" "到XX" "XX旅行" "XX游" 等模式
+      const destinationPatterns = [
+        /(?:去|到|游览|游玩)([^，,。\s]+)/g,
+        /([^，,。\s]+)(?:旅行|旅游|游|玩)/g,
+        /(?:规划|计划|安排).*?([^，,。\s]+)(?:的|之)?(?:旅行|行程|游玩)/g
+      ]
+      
+      for (const pattern of destinationPatterns) {
+        const matches = [...message.matchAll(pattern)]
+        if (matches.length > 0) {
+          destination = matches[0][1].trim()
+          // 过滤掉一些常见的非地名词汇
+          const excludeWords = ['一个', '我的', '他的', '她的', '我们', '大家', '自己', '详细', '完整', '简单']
+          if (!excludeWords.includes(destination) && destination.length > 1) {
+            break
+          }
+        }
+      }
+      
+      // 提取天数
+      let duration = null
+      
+      // 匹配数字+天的模式
+      const durationPatterns = [
+        /(\d+)(?:天|日)/g,
+        /(\d+)个(?:天|日)/g,
+        /(?:大概|大约|约|差不多)(\d+)(?:天|日)/g
+      ]
+      
+      for (const pattern of durationPatterns) {
+        const match = message.match(pattern)
+        if (match) {
+          const nums = match[0].match(/\d+/)
+          if (nums) {
+            duration = parseInt(nums[0])
+            break
+          }
+        }
+      }
+      
+      // 如果找到了目的地，认为这是一个旅行规划请求
+      if (destination) {
+        return {
+          destination: destination,
+          duration: duration || 3 // 默认3天
+        }
+      }
+      
+      return null
+    }
+    
+    /**
+     * 执行旅行规划
+     */
+    const executeTravelPlan = async (destination, duration) => {
+      try {
+        // 更新搜索表单数据
+        searchQuery.value = destination
+        tripDuration.value = duration
+        
+        // 显示正在规划的消息
+        const planningMessage = `正在为您规划${destination}${duration}天的旅行行程，请稍候...`
+        addMessage(planningMessage, 'assistant')
+        
+        // 调用行程规划API
+        const response = await axios.post('http://localhost:8000/api/trip/plan', {
+          destination: destination,
+          duration: duration
+        })
+        
+        if (response.data.success && response.data.plan_data) {
+          // 更新当前行程规划
+          currentPlan.value = response.data.plan_data
+          selectedDay.value = 1
+          
+          // 显示成功消息
+          const successMessage = `✅ 已为您成功规划${destination}${duration}天的旅行行程！\n\n行程包含${response.data.plan_data.itinerary.length}天的精彩安排，点击右侧地图查看详细路线，或切换到"旅行规划"标签查看完整行程。`
+          addMessage(successMessage, 'assistant')
+          
+          // 自动跳转到旅行规划界面
+          setTimeout(() => {
+            activeTab.value = 'plan'
+            ElMessage.success('行程规划完成，已自动切换到旅行规划界面')
+          }, 2000)
+          
+          // 更新地图中心
+          updateMapCenterFromQuery(destination)
+          
+        } else {
+          const errorMessage = `抱歉，无法为您规划${destination}的旅行行程。${response.data.error_message || '请稍后再试。'}`
+          addMessage(errorMessage, 'assistant')
+        }
+      } catch (error) {
+        console.error('旅行规划失败:', error)
+        const errorMessage = `抱歉，规划${destination}的旅行行程时遇到了问题，请稍后再试。`
+        addMessage(errorMessage, 'assistant')
+      }
+    }
+    
+    /**
+     * 处理聊天提交（流式响应版本，增加智能旅行规划检测）
      */
     const handleChatSubmit = async () => {
       if (!chatInput.value.trim()) {
@@ -1194,6 +1356,27 @@ export default {
       // 添加用户消息
       addMessage(userMessage, 'user')
       
+      // 首先检查是否是旅行规划请求
+      const travelRequest = parseTravelRequest(userMessage)
+      
+      if (travelRequest) {
+        // 如果是旅行规划请求，直接执行规划
+        chatLoading.value = false
+        await executeTravelPlan(travelRequest.destination, travelRequest.duration)
+        saveCurrentChat()
+        return
+      }
+      
+      // 如果不是旅行规划请求，继续正常的聊天流程
+      // 创建一个临时的助手消息用于流式更新
+      const assistantMessage = {
+        id: Date.now() + '_assistant',
+        content: '',
+        type: 'assistant',
+        timestamp: new Date()
+      }
+      messages.value.push(assistantMessage)
+      
       try {
         // 构建上下文数据
         const contextData = {
@@ -1205,24 +1388,93 @@ export default {
           mapCenter: mapCenter.value
         }
         
-        // 发送到AI聊天API
-        const response = await axios.post('http://localhost:8000/api/chat', {
-          message: userMessage,
-          context: JSON.stringify(contextData)
+        // 发送到AI流式聊天API
+        const response = await fetch('http://localhost:8000/api/chat/stream', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            message: userMessage,
+            context: JSON.stringify(contextData)
+          })
         })
         
-        if (response.data.success) {
-          addMessage(response.data.reply, 'assistant')
-        } else {
-          addMessage('抱歉，我暂时无法回答您的问题，请稍后再试。', 'assistant')
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`)
         }
+        
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        
+        while (true) {
+          const { value, done } = await reader.read()
+          if (done) break
+          
+          const chunk = decoder.decode(value)
+          const lines = chunk.split('\n')
+          
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6))
+                
+                if (data.type === 'chunk' && data.content) {
+                  // 流式更新助手消息内容
+                  assistantMessage.content += data.content
+                  
+                  // 触发响应式更新
+                  messages.value = [...messages.value]
+                  
+                  // 自动滚动到底部
+                  nextTick(() => {
+                    if (messagesContainer.value) {
+                      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+                    }
+                  })
+                } else if (data.type === 'error') {
+                  // 处理错误
+                  if (assistantMessage.content === '') {
+                    assistantMessage.content = data.content
+                  } else {
+                    assistantMessage.content += '\n\n' + data.content
+                  }
+                  messages.value = [...messages.value]
+                  break
+                } else if (data.type === 'end') {
+                  // 流结束
+                  break
+                }
+              } catch (e) {
+                console.error('解析SSE数据失败:', e)
+              }
+            }
+          }
+        }
+        
+        // 如果没有收到任何内容，显示默认消息
+        if (assistantMessage.content === '') {
+          assistantMessage.content = '抱歉，我暂时无法回答您的问题，请稍后再试。'
+          messages.value = [...messages.value]
+        }
+        
       } catch (error) {
-        console.error('聊天API调用失败:', error)
-        addMessage('抱歉，服务暂时不可用，请稍后再试。', 'assistant')
+        console.error('流式聊天API调用失败:', error)
+        
+        // 更新助手消息为错误消息
+        assistantMessage.content = '抱歉，服务暂时不可用，请稍后再试。'
+        messages.value = [...messages.value]
       } finally {
         chatLoading.value = false
         // 保存对话到历史记录
         saveCurrentChat()
+        
+        // 最终滚动到底部
+        nextTick(() => {
+          if (messagesContainer.value) {
+            messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+          }
+        })
       }
     }
 
@@ -1528,6 +1780,7 @@ export default {
       chatLoading,
       newChatLoading,
       handleChatSubmit,
+      fillExampleText,
       // 功能函数
       handleSearch,
       formatTime,
@@ -2181,6 +2434,39 @@ export default {
   font-weight: 500;
 }
 
+/* 使用示例样式 */
+.usage-examples {
+  margin-top: 25px;
+  padding: 20px;
+  background: linear-gradient(135deg, #f8f9ff 0%, #f0f2ff 100%);
+  border-radius: 12px;
+  border: 1px solid #e3f2fd;
+}
+
+.example-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.example-item {
+  padding: 10px 15px;
+  background: white;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #4a5568;
+  border-left: 3px solid #1a73e8;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+.example-item:hover {
+  background: #f7faff;
+  transform: translateX(2px);
+  box-shadow: 0 2px 6px rgba(26,115,232,0.15);
+}
+
 /* 消息样式 */
 .message-item {
   display: flex;
@@ -2217,8 +2503,72 @@ export default {
 
 .message-time {
   font-size: 12px;
-  opacity: 0.7;
-  margin-top: 4px;
+}
+
+/* 流式聊天相关样式 */
+.assistant-message-content {
+  position: relative;
+}
+
+.loading-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #666;
+}
+
+.typing-dots {
+  display: flex;
+  gap: 2px;
+}
+
+.typing-dots span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background-color: #666;
+  animation: typing 1.5s infinite;
+}
+
+.typing-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes typing {
+  0%, 60%, 100% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  30% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
+}
+
+.loading-text {
+  font-size: 12px;
+  color: #666;
+}
+
+.typing-cursor {
+  display: inline-block;
+  margin-left: 2px;
+  color: #1a73e8;
+  font-weight: bold;
+  animation: blink 1s infinite;
+}
+
+@keyframes blink {
+  0%, 50% {
+    opacity: 1;
+  }
+  51%, 100% {
+    opacity: 0;
+  }
 }
 
 /* 地图容器 */

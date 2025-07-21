@@ -67,11 +67,23 @@ const fetchWeatherData = async (location) => {
     return
   }
 
+  // 提取城市名（只保留中文城市名，去掉“的...行程”等后缀）
+  let city = location
+  // 匹配“xxx到yyy的n天行程”或“yyy的n天行程”，优先取最后一个城市
+  const cityMatch = city.match(/([\u4e00-\u9fa5]+)(?:到([\u4e00-\u9fa5]+))?的?\d+天?行程?/)
+  if (cityMatch) {
+    city = cityMatch[2] || cityMatch[1]
+  } else {
+    // 只取第一个中文城市名
+    const singleCity = city.match(/[\u4e00-\u9fa5]+/)
+    if (singleCity) city = singleCity[0]
+  }
+
   loading.value = true
   error.value = ''
 
-try {
-    const response = await fetch(`http://localhost:8000/api/weather/${encodeURIComponent(location)}`)
+  try {
+    const response = await fetch(`http://localhost:8000/api/weather/${encodeURIComponent(city)}`)
     const data = await response.json()
     console.log(data)
     if (data.success) {
