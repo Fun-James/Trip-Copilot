@@ -1223,79 +1223,12 @@ export default {
       })
     }
     
-    /**
-     * 智能解析用户的旅行规划请求
-     */
-    const parseTravelRequest = (message) => {
-      // 使用正则表达式和关键词匹配来识别旅行规划请求
-      const planKeywords = ['规划', '计划', '安排', '行程', '旅行', '旅游', '去', '玩', '游览', '自由行']
-      const dayKeywords = ['天', '日', '星期', '周']
-      
-      // 检查是否包含规划关键词
-      const hasPlanKeyword = planKeywords.some(keyword => message.includes(keyword))
-      
-      if (!hasPlanKeyword) {
-        return null
-      }
-      
-      // 提取目的地
-      let destination = null
-      
-      // 匹配 "去XX" "到XX" "XX旅行" "XX游" 等模式
-      const destinationPatterns = [
-        /(?:去|到|游览|游玩)([^，,。\s]+)/g,
-        /([^，,。\s]+)(?:旅行|旅游|游|玩)/g,
-        /(?:规划|计划|安排).*?([^，,。\s]+)(?:的|之)?(?:旅行|行程|游玩)/g
-      ]
-      
-      for (const pattern of destinationPatterns) {
-        const matches = [...message.matchAll(pattern)]
-        if (matches.length > 0) {
-          destination = matches[0][1].trim()
-          // 过滤掉一些常见的非地名词汇
-          const excludeWords = ['一个', '我的', '他的', '她的', '我们', '大家', '自己', '详细', '完整', '简单']
-          if (!excludeWords.includes(destination) && destination.length > 1) {
-            break
-          }
-        }
-      }
-      
-      // 提取天数
-      let duration = null
-      
-      // 匹配数字+天的模式
-      const durationPatterns = [
-        /(\d+)(?:天|日)/g,
-        /(\d+)个(?:天|日)/g,
-        /(?:大概|大约|约|差不多)(\d+)(?:天|日)/g
-      ]
-      
-      for (const pattern of durationPatterns) {
-        const match = message.match(pattern)
-        if (match) {
-          const nums = match[0].match(/\d+/)
-          if (nums) {
-            duration = parseInt(nums[0])
-            break
-          }
-        }
-      }
-      
-      // 如果找到了目的地，认为这是一个旅行规划请求
-      if (destination) {
-        return {
-          destination: destination,
-          duration: duration || 3 // 默认3天
-        }
-      }
-      
-      return null
-    }
+    // 已移除本地正则解析，改为后端智能解析
     
     /**
      * 执行旅行规划
      */
-    const executeTravelPlan = async (destination, duration) => {
+    const executeTravelPlan = async (destination, duration, start_point = null) => {
       try {
         // 更新搜索表单数据
         searchQuery.value = destination
@@ -1356,15 +1289,22 @@ export default {
       // 添加用户消息
       addMessage(userMessage, 'user')
       
-      // 首先检查是否是旅行规划请求
-      const travelRequest = parseTravelRequest(userMessage)
-      
-      if (travelRequest) {
-        // 如果是旅行规划请求，直接执行规划
-        chatLoading.value = false
-        await executeTravelPlan(travelRequest.destination, travelRequest.duration)
-        saveCurrentChat()
-        return
+      // 首先，尝试调用后端解析用户意图
+      try {
+        const parseResponse = await axios.post('http://localhost:8000/api/trip/parse-query', {
+          query: userMessage
+        });
+
+        // 如果后端成功解析出旅行规划意图
+        if (parseResponse.data.success && parseResponse.data.data.destination) {
+          const { destination, duration, start_point } = parseResponse.data.data;
+          chatLoading.value = false; // 停止聊天加载，转为规划流程
+          await executeTravelPlan(destination, duration, start_point);
+          saveCurrentChat();
+          return;
+        }
+      } catch (error) {
+        console.warn('调用查询解析API失败或未识别出规划意图，将按普通聊天处理:', error);
       }
       
       // 如果不是旅行规划请求，继续正常的聊天流程

@@ -60,6 +60,16 @@ class TripResponse(BaseModel):
     recommendations: List[str]
     estimated_cost: Optional[float] = None
 
+# 智能解析用户旅行请求的数据模型
+class QueryParseRequest(BaseModel):
+    query: str
+
+class QueryParseResponse(BaseModel):
+    success: bool
+    data: Optional[dict] = None
+    error_message: Optional[str] = None
+    estimated_cost: Optional[float] = None
+
 class ChatRequest(BaseModel):
     message: str
     context: Optional[str] = None
@@ -190,6 +200,69 @@ async def get_trip_suggestions(request: TripRequest):
             recommendations=[f"抱歉，无法生成{request.destination}的旅行建议，请稍后再试。错误：{str(e)}"],
             estimated_cost=request.budget if request.budget else None
         )
+
+@app.post("/api/trip/parse-query", response_model=QueryParseResponse)
+async def parse_query_with_llm(request: QueryParseRequest):
+    """
+    使用大模型解析用户的旅行查询，提取出发地、目的地和天数。
+    """
+    try:
+        llm = get_tongyi_client()
+
+        prompt = f"""
+        请从以下用户查询中提取旅行相关信息：
+
+        用户查询: "{request.query}"
+
+        你需要提取以下信息：
+        1. "start_point": 出发地点 (如果没有提到，则为 null)
+        2. "destination": 目的地 (必须有)
+        3. "duration": 旅行天数 (如果没有提到，则默认为 3)
+
+        请严格按照以下JSON格式返回，不要包含任何额外的解释性文字：
+        {{
+          "start_point": "...",
+          "destination": "...",
+          "duration": ...
+        }}
+        """
+
+        messages = [
+            SystemMessage(content="你是一个专门用于提取旅行信息的助手。"),
+            HumanMessage(content=prompt)
+        ]
+
+        response = llm.invoke(messages)
+
+        ai_content = response.content
+        if isinstance(ai_content, list):
+            text_content = ""
+            for item in ai_content:
+                if isinstance(item, dict) and "text" in item:
+                    text_content += item["text"]
+                elif isinstance(item, str):
+                    text_content += item
+            ai_content = text_content
+
+        # 提取JSON部分
+        json_match = re.search(r'\{.*\}', str(ai_content), re.DOTALL)
+        if not json_match:
+            raise ValueError("AI返回的内容不包含有效的JSON格式")
+
+        json_str = json_match.group()
+        parsed_data = json.loads(json_str)
+
+        # 字段校验
+        if not parsed_data.get("destination"):
+            return QueryParseResponse(success=False, error_message="无法识别目的地")
+
+        if "duration" not in parsed_data or not isinstance(parsed_data["duration"], int):
+            parsed_data["duration"] = 3 # 默认值
+
+        return QueryParseResponse(success=True, data=parsed_data)
+
+    except Exception as e:
+        return QueryParseResponse(success=False, error_message=f"解析查询时出错: {str(e)}")
 
 # 获取热门目的地（AI生成）
 @app.get("/api/destinations/popular")
