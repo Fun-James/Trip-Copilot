@@ -38,11 +38,7 @@ def get_tongyi_client():
     return ChatTongyi(api_key=SecretStr(api_key), model="qwen-plus")
 
 # 数据模型
-class TripRequest(BaseModel):
-    destination: str
-    duration: Optional[int] = None
-    budget: Optional[float] = None
-    interests: Optional[List[str]] = []
+# 注释：删除了未使用的 TripRequest 和 TripResponse 模型（用于 /api/trip/suggest）
 
 # 新增行程规划数据模型
 class ItineraryPlanRequest(BaseModel):
@@ -53,12 +49,6 @@ class ItineraryPlanResponse(BaseModel):
     success: bool
     plan_data: Optional[dict] = None
     error_message: Optional[str] = None
-
-class TripResponse(BaseModel):
-    id: int
-    destination: str
-    recommendations: List[str]
-    estimated_cost: Optional[float] = None
 
 # 智能解析用户旅行请求的数据模型
 class QueryParseRequest(BaseModel):
@@ -74,9 +64,7 @@ class ChatRequest(BaseModel):
     message: str
     context: Optional[str] = None
 
-class ChatResponse(BaseModel):
-    reply: str
-    success: bool = True
+# 注释：删除了未使用的 ChatResponse 模型（用于非流式聊天）
 
 class PathRequest(BaseModel):
     start: str
@@ -88,13 +76,7 @@ class PathResponse(BaseModel):
     path_data: Optional[dict] = None
     error_message: Optional[str] = None
 
-class LocationRequest(BaseModel):
-    location: str
-
-class LocationResponse(BaseModel):
-    success: bool
-    location_data: Optional[dict] = None
-    error_message: Optional[str] = None
+# 注释：删除了未使用的 LocationRequest 和 LocationResponse 模型（用于 /api/location/info）
 
 # 新增：为行程中的地点生成路径规划的请求模型
 class ItineraryRouteRequest(BaseModel):
@@ -117,89 +99,8 @@ async def health_check():
     return {"status": "healthy"}
 
 # 获取旅行建议
-@app.post("/api/trip/suggest", response_model=TripResponse)
-async def get_trip_suggestions(request: TripRequest):
-    try:
-        # 获取通义千问客户端
-        llm = get_tongyi_client()
-        
-        # 构建提示词
-        interests_text = "、".join(request.interests) if request.interests else "一般旅游"
-        budget_text = f"，预算约{request.budget}元" if request.budget else ""
-        duration_text = f"，计划{request.duration}天" if request.duration else ""
-        
-        prompt = f"""
-        请为用户制定一个详细的{request.destination}旅行计划。
-        
-        用户信息：
-        - 目的地：{request.destination}
-        - 兴趣爱好：{interests_text}
-        {duration_text}{budget_text}
-        
-        请按以下格式返回4个具体的旅行建议，每行一个建议：
-        1. [建议内容]
-        2. [建议内容]  
-        3. [建议内容]
-        4. [建议内容]
-        
-        每个建议都要实用且详细，包含具体的地点或活动名称。
-        """
-        
-        # 使用通义千问生成建议
-        messages = [
-            SystemMessage(content="你是一位专业的旅行规划师，擅长为用户提供个性化的旅行建议。"),
-            HumanMessage(content=prompt)
-        ]
-        
-        response = llm.invoke(messages)
-        
-        # 处理AI响应内容
-        ai_content = response.content
-        if isinstance(ai_content, list):
-            text_content = ""
-            for item in ai_content:
-                if isinstance(item, dict) and "text" in item:
-                    text_content += item["text"]
-                elif isinstance(item, str):
-                    text_content += item
-            ai_content = text_content
-        
-        # 解析建议列表
-        lines = str(ai_content).split('\n')
-        recommendations = []
-        
-        for line in lines:
-            line = line.strip()
-            # 匹配数字开头的行
-            if re.match(r'^\d+\.?\s*', line):
-                # 去掉数字前缀
-                clean_line = re.sub(r'^\d+\.?\s*', '', line).strip()
-                if clean_line:
-                    recommendations.append(clean_line)
-        
-        # 如果解析不到足够的建议，使用整体文本
-        if len(recommendations) < 4:
-            recommendations = [line.strip() for line in lines if line.strip() and not line.strip().startswith('请')]
-            recommendations = recommendations[:4]
-        
-        # 确保有4条建议
-        while len(recommendations) < 4:
-            recommendations.append(f"探索{request.destination}的更多精彩体验")
-        
-        return TripResponse(
-            id=1,
-            destination=request.destination,
-            recommendations=recommendations[:4],
-            estimated_cost=request.budget if request.budget else None
-        )
-        
-    except Exception as e:
-        return TripResponse(
-            id=1,
-            destination=request.destination,
-            recommendations=[f"抱歉，无法生成{request.destination}的旅行建议，请稍后再试。错误：{str(e)}"],
-            estimated_cost=request.budget if request.budget else None
-        )
+# 注释：此API端点未被前端使用，已删除
+# @app.post("/api/trip/suggest", response_model=TripResponse)
 
 @app.post("/api/trip/parse-query", response_model=QueryParseResponse)
 async def parse_query_with_llm(request: QueryParseRequest):
@@ -265,60 +166,8 @@ async def parse_query_with_llm(request: QueryParseRequest):
         return QueryParseResponse(success=False, error_message=f"解析查询时出错: {str(e)}")
 
 # 获取热门目的地（AI生成）
-@app.get("/api/destinations/popular")
-async def get_popular_destinations():
-    try:
-        llm = get_tongyi_client()
-        
-        prompt = """请推荐5个中国最受欢迎的旅游目的地，每个目的地包含名称和简短描述。
-        请按以下JSON格式返回：
-        [
-            {"name": "城市名", "country": "中国", "description": "简短描述"},
-            ...
-        ]
-        只返回JSON格式，不要其他文字。"""
-        
-        messages = [
-            SystemMessage(content="你是一位旅游专家，了解中国各地的热门旅游目的地。"),
-            HumanMessage(content=prompt)
-        ]
-        
-        response = llm.invoke(messages)
-        
-        # 处理AI响应
-        ai_content = response.content
-        if isinstance(ai_content, list):
-            text_content = ""
-            for item in ai_content:
-                if isinstance(item, dict) and "text" in item:
-                    text_content += item["text"]
-                elif isinstance(item, str):
-                    text_content += item
-            ai_content = text_content
-        
-        # 尝试解析JSON
-        
-        # 提取JSON部分
-        json_match = re.search(r'\[.*\]', str(ai_content), re.DOTALL)
-        if json_match:
-            json_str = json_match.group()
-            destinations = json.loads(json_str)
-            return {"destinations": destinations}
-        else:
-            # 如果解析失败，返回默认数据
-            raise Exception("无法解析AI响应")
-            
-    except Exception as e:
-        # fallback到简单的推荐
-        return {
-            "destinations": [
-                {"name": "北京", "country": "中国", "description": "历史文化名城，故宫、长城等著名景点"},
-                {"name": "上海", "country": "中国", "description": "现代化国际都市，外滩、迪士尼等"},
-                {"name": "杭州", "country": "中国", "description": "人间天堂，西湖美景闻名世界"},
-                {"name": "成都", "country": "中国", "description": "天府之国，美食与熊猫的故乡"},
-                {"name": "西安", "country": "中国", "description": "千年古都，兵马俑等历史遗迹"}
-            ]
-        }
+# 注释：此API端点未被前端使用，已删除
+# @app.get("/api/destinations/popular")
 
 # 获取高德地图API密钥
 def get_amap_api_key():
@@ -644,10 +493,11 @@ async def get_trip_path(request: PathRequest):
         }
         
         # 根据不同交通方式提取路径信息
-        if mode == "bicycling":
-            processed_data["route_info"] = route_data.get("data", {})
-        else:
-            processed_data["route_info"] = route_data.get("route", {})
+        if route_data is not None:
+            if mode == "bicycling":
+                processed_data["route_info"] = route_data.get("data", {})
+            else:
+                processed_data["route_info"] = route_data.get("route", {})
         
         return PathResponse(
             success=True,
@@ -754,102 +604,9 @@ async def get_itinerary_routes(request: ItineraryRouteRequest):
             error_message=f"生成行程路径规划失败: {str(e)}"
         )
 
-# 聊天API
-@app.post("/api/chat", response_model=ChatResponse)
-async def chat_with_ai(request: ChatRequest):
-    try:
-        # 获取通义千问客户端
-        llm = get_tongyi_client()
-        
-        # 构建增强的系统提示词，包含地图和行程规划功能描述
-        system_prompt = """你是一位专业友好的旅行助手，名叫Trip Copilot。你可以：
-1. 为用户提供旅行建议和规划
-2. 回答关于目的地的问题
-3. 推荐景点、美食、住宿等
-4. 帮助估算旅行费用
-5. 解释地图上的标记和路径规划
-6. 基于当前行程规划提供建议和修改意见
-7. 解答关于具体景点位置和交通方式的问题
-
-重要提示：
-- 如果用户提到地图、路径、行程或具体景点，请结合提供的背景信息回答
-- 如果背景信息中包含行程规划数据，你可以参考这些信息来回答用户问题
-- 如果用户询问路径或交通，你可以基于已规划的路线给出建议
-- 请用友好、专业的语气回复用户。"""
-        
-        messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=request.message)
-        ]
-        
-        # 增强的上下文处理：解析结构化的背景信息
-        if request.context:
-            try:
-                # 尝试解析上下文为JSON，如果失败则当作普通文本处理
-                import json
-                context_data = json.loads(request.context)
-                
-                # 构建结构化的上下文描述
-                context_parts = []
-                
-                # 处理行程规划数据
-                if "currentPlan" in context_data and context_data["currentPlan"]:
-                    plan = context_data["currentPlan"]
-                    context_parts.append(f"当前行程规划：{plan.get('destination', '未知目的地')}{plan.get('total_days', 'N')}日游")
-                    
-                    if "itinerary" in plan:
-                        context_parts.append("详细安排：")
-                        for day_plan in plan["itinerary"]:
-                            day_places = [place["name"] for place in day_plan.get("places", [])]
-                            context_parts.append(f"第{day_plan['day']}天（{day_plan.get('theme', '主题未定')}）：{' -> '.join(day_places)}")
-                
-                # 处理路径规划数据
-                if "currentRoute" in context_data and context_data["currentRoute"]:
-                    route = context_data["currentRoute"]
-                    start_name = route.get("start_point", {}).get("name", "起点")
-                    end_name = route.get("end_point", {}).get("name", "终点")
-                    mode = route.get("mode", "driving")
-                    mode_text = {"driving": "驾车", "walking": "步行", "transit": "公交"}.get(mode, mode)
-                    context_parts.append(f"当前路径规划：{start_name} → {end_name}（{mode_text}）")
-                
-                # 处理地图中心和选中天数
-                if "selectedDay" in context_data:
-                    context_parts.append(f"当前查看：第{context_data['selectedDay']}天的行程")
-                
-                if context_parts:
-                    enhanced_context = "当前状态：\n" + "\n".join(context_parts)
-                    messages.append(HumanMessage(content=f"背景信息：{enhanced_context}"))
-                else:
-                    # 如果没有结构化数据，使用原始上下文
-                    messages.append(HumanMessage(content=f"背景信息：{request.context}"))
-                    
-            except (json.JSONDecodeError, KeyError):
-                # 如果不是JSON格式或解析失败，当作普通文本处理
-                messages.append(HumanMessage(content=f"背景信息：{request.context}"))
-        
-        response = llm.invoke(messages)
-        
-        # 处理响应内容
-        ai_content = response.content
-        if isinstance(ai_content, list):
-            # 如果是列表格式，提取文本内容
-            text_content = ""
-            for item in ai_content:
-                if isinstance(item, dict) and "text" in item:
-                    text_content += item["text"]
-                elif isinstance(item, str):
-                    text_content += item
-            ai_reply = text_content.strip()
-        else:
-            ai_reply = str(ai_content).strip()
-        
-        return ChatResponse(reply=ai_reply, success=True)
-        
-    except Exception as e:
-        return ChatResponse(
-            reply=f"抱歉，我遇到了一些技术问题。请稍后再试。错误信息：{str(e)}", 
-            success=False
-        )
+# 聊天API - 非流式版本
+# 注释：此API端点未被前端使用，前端使用流式版本，已删除
+# @app.post("/api/chat", response_model=ChatResponse)
 
 # 新增：流式聊天API
 @app.post("/api/chat/stream")
@@ -966,164 +723,12 @@ async def chat_with_ai_stream(request: ChatRequest):
     )
 
 # 获取地点详细信息API
-@app.post("/api/location/info", response_model=LocationResponse)
-async def get_location_info(request: LocationRequest):
-    """获取地点的详细信息和坐标"""
-    try:
-        api_key = get_amap_api_key()
-        
-        # 首先尝试POI搜索获取更精确的景点信息
-        poi_url = f"https://restapi.amap.com/v3/place/text"
-        poi_params = {
-            "key": api_key,
-            "keywords": request.location,
-            "types": "110000|130000|140000|170000",
-            "extensions": "all",
-            "size": 1
-        }
-        
-        poi_response = requests.get(poi_url, params=poi_params)
-        poi_data = poi_response.json()
-        
-        if poi_data["status"] == "1" and poi_data["pois"]:
-            # 使用POI搜索结果
-            poi = poi_data["pois"][0]
-            location_coords = poi["location"].split(",")
-            
-            location_data = {
-                "name": request.location,
-                "poi_name": poi.get("name", ""),
-                "formatted_address": poi.get("address", ""),
-                "province": poi.get("pname", ""),
-                "city": poi.get("cityname", ""),
-                "district": poi.get("adname", ""),
-                "location": poi["location"],
-                "longitude": float(location_coords[0]),
-                "latitude": float(location_coords[1]),
-                "type": poi.get("type", ""),
-                "tel": poi.get("tel", ""),
-                "business_area": poi.get("business_area", ""),
-                "source": "POI"
-            }
-            
-            return LocationResponse(
-                success=True,
-                location_data=location_data
-            )
-        
-        # 如果POI搜索失败，fallback到地理编码
-        geo_url = f"https://restapi.amap.com/v3/geocode/geo"
-        geo_params = {
-            "key": api_key,
-            "address": request.location
-        }
-        
-        geo_response = requests.get(geo_url, params=geo_params)
-        geo_data = geo_response.json()
-        
-        if geo_data["status"] == "1" and geo_data["geocodes"]:
-            geocode = geo_data["geocodes"][0]
-            location_data = {
-                "name": request.location,
-                "formatted_address": geocode.get("formatted_address", ""),
-                "province": geocode.get("province", ""),
-                "city": geocode.get("city", ""),
-                "district": geocode.get("district", ""),
-                "location": geocode.get("location", ""),
-                "longitude": float(geocode.get("location", "0,0").split(",")[0]),
-                "latitude": float(geocode.get("location", "0,0").split(",")[1]),
-                "level": geocode.get("level", ""),
-                "source": "Geocode"
-            }
-            
-            return LocationResponse(
-                success=True,
-                location_data=location_data
-            )
-        else:
-            return LocationResponse(
-                success=False,
-                error_message=f"无法找到地点'{request.location}'的信息"
-            )
-            
-    except ValueError as ve:
-        return LocationResponse(
-            success=False,
-            error_message=str(ve)
-        )
-    except Exception as e:
-        return LocationResponse(
-            success=False,
-            error_message=f"服务器内部错误: {str(e)}"
-        )
+# 注释：此API端点未被前端使用，已删除
+# @app.post("/api/location/info", response_model=LocationResponse)
 
-# 行程规划API
-@app.post("/api/trip/itinerary", response_model=ItineraryPlanResponse)
-async def plan_itinerary(request: ItineraryPlanRequest):
-    """根据目的地和天数规划行程"""
-    try:
-        # 获取通义千问客户端
-        llm = get_tongyi_client()
-        
-        # 构建提示词
-        prompt = f"""
-        请为用户制定一个为期{request.duration}天的{request.destination}旅行行程。
-        
-        用户信息：
-        - 目的地：{request.destination}
-        - 旅行天数：{request.duration}天
-        
-        请按以下格式返回行程安排：
-        {
-            "day_1": ["活动1", "活动2"],
-            "day_2": ["活动1", "活动2"],
-            ...
-        }
-        
-        每个活动要具体，包含地点和活动名称。
-        """
-        
-        # 使用通义千问生成行程
-        messages = [
-            SystemMessage(content="你是一位专业的旅行规划师，擅长为用户提供个性化的旅行行程规划。"),
-            HumanMessage(content=prompt)
-        ]
-        
-        response = llm.invoke(messages)
-        
-        # 处理AI响应内容
-        ai_content = response.content
-        if isinstance(ai_content, list):
-            text_content = ""
-            for item in ai_content:
-                if isinstance(item, dict) and "text" in item:
-                    text_content += item["text"]
-                elif isinstance(item, str):
-                    text_content += item
-            ai_content = text_content
-        
-        # 尝试解析为字典
-        try:
-            plan_data = json.loads(str(ai_content))
-        except json.JSONDecodeError:
-            plan_data = None
-        
-        if not plan_data:
-            return ItineraryPlanResponse(
-                success=False,
-                error_message="无法解析行程规划，请稍后再试"
-            )
-        
-        return ItineraryPlanResponse(
-            success=True,
-            plan_data=plan_data
-        )
-        
-    except Exception as e:
-        return ItineraryPlanResponse(
-            success=False,
-            error_message=f"服务器内部错误: {str(e)}"
-        )
+# 行程规划API - 简单版本
+# 注释：此API端点未被前端使用，前端使用复杂版本 /api/trip/plan，已删除
+# @app.post("/api/trip/itinerary", response_model=ItineraryPlanResponse)
 
 def get_transportation_text(mode):
     """获取交通方式的友好文本"""
@@ -1322,30 +927,7 @@ def recommend_transportation(start_lng, start_lat, end_lng, end_lat, distance_km
         "available_modes": available_modes
     }
 
-def extract_hours_minutes(time_str):
-    """
-    从字符串中提取小时和分钟
-    
-    参数:
-        time_str (str): 包含时间的字符串，如 "1小时24分钟" 或 "24分钟"
-    
-    返回:
-        tuple: (小时, 分钟)，例如 "1小时24分钟" -> (1, 24)，"24分钟" -> (0, 24)
-    """
-    # 初始化小时和分钟为 0
-    hours = 0
-    minutes = 0
-    
-    # 用正则表达式匹配小时和分钟
-    hours_match = re.search(r'(\d+)小时', time_str)
-    minutes_match = re.search(r'(\d+)分钟', time_str)
-    
-    if hours_match:
-        hours = int(hours_match.group(1))
-    if minutes_match:
-        minutes = int(minutes_match.group(1))
-    
-    return (hours, minutes)
+# 注释：删除了未使用的 extract_hours_minutes 函数
 
 # 新增函数：检查地点附近是否有公交/地铁站
 def has_nearby_transit_station(lng, lat, radius=500):
@@ -1651,98 +1233,8 @@ async def get_transportation_info(request: dict):
         return {"error": f"获取交通信息失败: {str(e)}"}
 
 # 新增：为行程地点生成路径规划API
-@app.post("/api/trip/routes", response_model=ItineraryRouteResponse)
-async def generate_itinerary_routes(request: ItineraryRouteRequest):
-    """为行程中的地点列表生成相邻地点间的路径规划"""
-    try:
-        if not request.places or len(request.places) < 2:
-            return ItineraryRouteResponse(
-                success=False,
-                error_message="至少需要2个地点才能生成路径规划"
-            )
-        
-        routes = []
-        mode = request.mode or "driving"
-        
-        # 验证所有地点的坐标有效性
-        valid_places = []
-        for place in request.places:
-            if not all(key in place for key in ["name", "longitude", "latitude"]):
-                continue
-            
-            try:
-                lng = float(place["longitude"])
-                lat = float(place["latitude"])
-                
-                # 检查坐标范围
-                if (-180 <= lng <= 180 and -90 <= lat <= 90):
-                    valid_places.append({
-                        "name": place["name"],
-                        "longitude": lng,
-                        "latitude": lat
-                    })
-                else:
-                    print(f"警告：地点 '{place['name']}' 坐标超出有效范围: ({lng}, {lat})")
-            except (ValueError, TypeError):
-                print(f"警告：地点 '{place['name']}' 坐标格式错误")
-                continue
-        
-        if len(valid_places) < 2:
-            return ItineraryRouteResponse(
-                success=False,
-                error_message="没有足够的有效地点生成路径规划"
-            )
-        
-        # 为相邻地点生成路径规划
-        for i in range(len(valid_places) - 1):
-            start_place = valid_places[i]
-            end_place = valid_places[i + 1]
-            
-            try:
-                route_data = get_route_planning(
-                    (start_place["longitude"], start_place["latitude"]),
-                    (end_place["longitude"], end_place["latitude"]),
-                    mode
-                )
-                
-                if route_data and route_data.get("status") == "1":
-                    # 构建路径数据，与手动路径规划保持一致的数据结构
-                    route_info = {
-                        "start_point": {
-                            "name": start_place["name"],
-                            "longitude": start_place["longitude"],
-                            "latitude": start_place["latitude"]
-                        },
-                        "end_point": {
-                            "name": end_place["name"],
-                            "longitude": end_place["longitude"],
-                            "latitude": end_place["latitude"]
-                        },
-                        "mode": mode,
-                        "route_info": route_data.get("route", {}),
-                        "raw_data": route_data,
-                        "sequence": i + 1
-                    }
-                    routes.append(route_info)
-                    print(f"成功生成路径：{start_place['name']} -> {end_place['name']}")
-                else:
-                    print(f"无法生成路径：{start_place['name']} -> {end_place['name']}")
-                    # 即使某段路径失败，也继续处理其他路径
-                    
-            except Exception as e:
-                print(f"生成路径时出错：{start_place['name']} -> {end_place['name']}, 错误: {e}")
-                continue
-        
-        return ItineraryRouteResponse(
-            success=True,
-            routes_data=routes
-        )
-        
-    except Exception as e:
-        return ItineraryRouteResponse(
-            success=False,
-            error_message=f"服务器内部错误: {str(e)}"
-        )
+# 注释：此API端点未被前端使用，前端使用 /api/trip/itinerary-routes，已删除
+# @app.post("/api/trip/routes", response_model=ItineraryRouteResponse)
 
 # 获取天气预报
 @app.get("/api/weather/{location}")

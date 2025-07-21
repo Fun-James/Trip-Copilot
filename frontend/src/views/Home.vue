@@ -447,7 +447,7 @@
 
 <script>
 import { ref, nextTick, onMounted } from 'vue'
-import { Search, Menu, Edit, Document, MapLocation, Location, ChatLineRound, Star, Refresh, CloseBold, Guide, LocationFilled, Loading, SwitchButton } from '@element-plus/icons-vue'
+import { Search, Menu, Edit, Document, MapLocation, Location, ChatLineRound, Star, Refresh, CloseBold, Guide, LocationFilled, Loading, SwitchButton, Sunny } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
 import MapDisplay from '@/components/MapDisplay.vue'
@@ -474,7 +474,8 @@ export default {
     Loading,
     MapDisplay,
     WeatherForecast,
-    SwitchButton
+    SwitchButton,
+    Sunny
   },
   setup() {
     const router = useRouter()
