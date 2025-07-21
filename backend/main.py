@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, SecretStr
 from geopy.distance import geodesic
 from typing import Optional, List
+from datetime import datetime
 import uvicorn
 import os
 import time
@@ -450,6 +451,15 @@ def get_route_planning(start_coords: tuple, end_coords: tuple, mode: str = "driv
                 "city": city,  # 使用智能提取的城市
                 "cityd": city  # 目的地城市，公交通常在同一城市内
             }
+        elif mode == "bicycling": 
+            # 骑行路径规划使用新的API
+            url = "https://restapi.amap.com/v4/direction/bicycling"
+            params = {
+                "key": api_key,
+                "origin": origin,
+                "destination": destination
+            }
+            
         else:
             # 驾车和步行使用原来的API
             url = f"https://restapi.amap.com/v3/direction/{mode}"
@@ -530,7 +540,14 @@ async def get_trip_path(request: PathRequest):
             request.end     # 传递终点名称
         )
         
-        if not route_data or route_data.get("status") != "1":
+        # 针对不同交通方式检查响应状态
+        is_success = False
+        if mode == "bicycling":
+            is_success = route_data and route_data.get("errcode") == 0
+        else:
+            is_success = route_data and route_data.get("status") == "1"
+            
+        if not is_success:
             return PathResponse(
                 success=False,
                 error_message="获取路径规划失败，请检查起点和终点是否正确"
@@ -549,9 +566,14 @@ async def get_trip_path(request: PathRequest):
                 "latitude": end_lat      # 已经是 float 类型
             },
             "mode": mode,
-            "route_info": route_data.get("route", {}),
             "raw_data": route_data  # 完整的原始数据，供前端使用
         }
+        
+        # 根据不同交通方式提取路径信息
+        if mode == "bicycling":
+            processed_data["route_info"] = route_data.get("data", {})
+        else:
+            processed_data["route_info"] = route_data.get("route", {})
         
         return PathResponse(
             success=True,
@@ -973,7 +995,14 @@ def get_transit_time(start_lng, start_lat, end_lng, end_lat, mode="driving"):
         time_str = "交通时间未知"
         route_steps = []
         
-        if data.get("status") == "1" or data.get("errcode") == 0:
+        # 检查是否成功 - 骑行模式使用errcode:0，其他模式使用status:"1"
+        is_success = False
+        if mode == "bicycling":
+            is_success = data.get("errcode") == 0
+        else:
+            is_success = data.get("status") == "1"
+            
+        if is_success:
             # 公交方式 - 提取换乘路线
             if mode == "transit" and data.get("route") and data["route"].get("transits"):
                 transit = data["route"]["transits"][0]
@@ -989,31 +1018,24 @@ def get_transit_time(start_lng, start_lat, end_lng, end_lat, mode="driving"):
                         railways = segment["railway"].get("lines", [])
                         if railways:
                             route_steps.append(railways[0].get("name", "地铁"))
-                
-                # 转换为更友好的格式
-                minutes = duration // 60
-                if minutes < 60:
-                    time_str = f"{minutes}分钟"
-                else:
-                    hours = minutes // 60
-                    remaining_minutes = minutes % 60
-                    if remaining_minutes > 0:
-                        time_str = f"{hours}小时{remaining_minutes}分钟"
-                    else:
-                        time_str = f"{hours}小时"
             
-            # 其他交通方式
-            else:
-                if mode == "walking" and data.get("route"):
-                    path = data["route"]["paths"][0]
-                    duration = int(path["duration"])  # 秒
-                elif mode == "bicycling" and data.get("data"):
-                    path = data["data"]["paths"][0]
-                    duration = int(path["duration"])  # 秒
-                else:  # 驾车模式
-                    path = data["route"]["paths"][0]
-                    duration = int(path["duration"])  # 秒
+            # 骑行方式 - 特殊处理骑行API的返回格式
+            elif mode == "bicycling" and data.get("data") and data["data"].get("paths"):
+                path = data["data"]["paths"][0]
+                duration = int(path["duration"])  # 秒
+            
+            # 步行方式
+            elif mode == "walking" and data.get("route") and data["route"].get("paths"):
+                path = data["route"]["paths"][0]
+                duration = int(path["duration"])  # 秒
                 
+            # 驾车方式
+            elif data.get("route") and data["route"].get("paths"):
+                path = data["route"]["paths"][0]
+                duration = int(path["duration"])  # 秒
+            
+            # 如果成功获取到了时间
+            if 'duration' in locals():
                 # 转换为更友好的格式
                 minutes = duration // 60
                 if minutes < 60:
@@ -1534,5 +1556,90 @@ async def generate_itinerary_routes(request: ItineraryRouteRequest):
             error_message=f"服务器内部错误: {str(e)}"
         )
 
+# 获取天气预报
+@app.get("/api/weather/{location}")
+async def get_weather(location: str):
+    """获取指定地点的天气预报"""
+    try:
+        api_key = get_amap_api_key()
+        
+        # 先通过地理编码获取城市编码
+        geocode_url = "https://restapi.amap.com/v3/geocode/geo"
+        params = {
+            "key": api_key,
+            "address": location
+        }
+        
+        response = requests.get(geocode_url, params=params)
+        geocode_data = response.json()
+        
+        if geocode_data["status"] != "1" or not geocode_data["geocodes"]:
+            return {
+                "success": False,
+                "error": f"无法找到{location}的地理位置信息"
+            }
+        
+        # 获取城市编码
+        adcode = geocode_data["geocodes"][0]["adcode"]
+        
+        # 获取天气预报
+        weather_url = "https://restapi.amap.com/v3/weather/weatherInfo"
+        params = {
+            "key": api_key,
+            "city": adcode,
+            "extensions": "all"  # 获取预报天气
+        }
+        
+        response = requests.get(weather_url, params=params)
+        data = response.json()
+        
+        if data["status"] != "1" or "forecasts" not in data or not data["forecasts"]:
+            return {
+                "success": False,
+                "error": f"获取{location}的天气信息失败"
+            }
+        
+        # 处理天气数据
+        forecasts = []
+        weather_data = data["forecasts"][0]["casts"]
+        today = datetime.now().date()
+        
+        for day in weather_data:
+            forecast_date = datetime.strptime(day["date"], "%Y-%m-%d").date()
+            date_diff = (forecast_date - today).days
+            
+            if date_diff == 0:
+                display_date = "今天"
+            elif date_diff == 1:
+                display_date = "明天"
+            elif date_diff == 2:
+                display_date = "后天"
+            else:
+                display_date = day["date"][5:]  # 只显示月-日
+            
+            forecast = {
+                "date": display_date,
+                "tempHigh": int(day["daytemp"]),
+                "tempLow": int(day["nighttemp"]),
+                "description": day["dayweather"],
+                "daywind": day["daywind"],
+                "nightwind": day["nightwind"],
+                "daypower": day["daypower"],
+                "nightpower": day["nightpower"]
+            }
+            forecasts.append(forecast)
+        
+        return {
+            "success": True,
+            "location": location,
+            "forecasts": forecasts[:3]  # 只返回未来3天的预报
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"获取天气信息时发生错误: {str(e)}"
+        }
+    
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

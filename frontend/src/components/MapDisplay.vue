@@ -642,63 +642,50 @@ const drawRoute = async (routeData) => {
       return
     }
 
-    const routeInfo = routeData.route_info
-    if (!routeInfo || !routeInfo.paths || routeInfo.paths.length === 0) {
+   const routeInfo = routeData.route_info
+    if (!routeInfo) {
       console.warn('路径信息为空，绘制简单路径')
       drawSimpleRoute(routeData)
       return
     }
 
-    const path = routeInfo.paths[0]
-    console.log('路径详情:', path)
-
-    // 收集所有路径点
     const pathPoints = []
     
     // 首先添加起点
     pathPoints.push([startLng, startLat])
-
-    // 如果有详细步骤，解析polyline
-    if (path.steps && path.steps.length > 0) {
-      path.steps.forEach((step, stepIndex) => {
-        if (step.polyline && typeof step.polyline === 'string') {
-          try {
-            // 解析polyline字符串为坐标点
-            const polylinePoints = step.polyline.split(';')
-            console.log(`步骤 ${stepIndex} polyline点数:`, polylinePoints.length)
+    map.value.setCenter([startLng, startLat])
+    // 根据不同的模式处理路径点
+    if (routeData.mode === 'transit' && routeInfo.transits && routeInfo.transits.length > 0) {
+      // 对于公交模式，遍历所有路段
+      routeInfo.transits[0].segments.forEach((segment, transitIndex) => {
+        console.log(`处理公交路段 ${transitIndex + 1}/${routeInfo.transits[0].segments.length}`)
+        
+        // 处理segments中的各类型路段
+        if (segment) {
+            // 处理步行路段
+            if (segment.walking && segment.walking.steps) {
+              console.log(1)
+              processSteps(segment.walking.steps, pathPoints, 'walking')
+            }
             
-            let validPointsInStep = 0
-            polylinePoints.forEach(point => {
-              if (point && point.includes(',')) {
-                const parts = point.split(',')
-                if (parts.length >= 2) {
-                  const lngStr = parts[0].trim()
-                  const latStr = parts[1].trim()
-                  
-                  // 确保字符串不为空且不包含非数字字符
-                  if (lngStr && latStr && /^-?\d+\.?\d*$/.test(lngStr) && /^-?\d+\.?\d*$/.test(latStr)) {
-                    const lng = parseFloat(lngStr)
-                    const lat = parseFloat(latStr)
-                    
-                    // 严格验证每个坐标点
-                    if (isValidCoordinate(lng, lat)) {
-                      pathPoints.push([lng, lat])
-                      validPointsInStep++
-                    } else {
-                      console.warn('跳过无效坐标点:', { lng, lat, original: point })
-                    }
-                  } else {
-                    console.warn('跳过格式错误的坐标:', { lngStr, latStr, original: point })
-                  }
-                }
-              }
-            })
-            console.log(`步骤 ${stepIndex} 有效坐标点数:`, validPointsInStep)
-          } catch (e) {
-            console.warn(`解析步骤 ${stepIndex} polyline失败:`, e)
-          }
+            // 处理公交路段
+            if (segment.bus && segment.bus.buslines) {
+              processSteps(segment.bus.buslines, pathPoints, 'bus')
+            }
+            
+            // 处理地铁路段
+            if (segment.railway && segment.railway.steps) {
+              processSteps(segment.railway.steps, pathPoints, 'railway')
+            }
+
         }
       })
+    } else if (routeInfo.paths && routeInfo.paths.length > 0) {
+      // 处理其他模式的路径
+      const path = routeInfo.paths[0]
+      if (path.steps && path.steps.length > 0) {
+        processSteps(path.steps, pathPoints, routeData.mode)
+      }
     }
 
     // 最后添加终点
@@ -1437,6 +1424,129 @@ const clearAllData = () => {
     console.log('地图数据已清空')
   } catch (error) {
     console.error('清空地图数据失败:', error)
+  }
+}
+
+/**
+ * 处理路径步骤并提取坐标点
+ * @param {Array} steps - 步骤数组
+ * @param {Array} pathPoints - 存储坐标点的数组
+ * @param {string} type - 路段类型
+ */
+const processSteps = (steps, pathPoints, type) => {
+  if (!Array.isArray(steps) || !Array.isArray(pathPoints)) {
+    console.warn(`处理${type}类型路段时参数无效:`, { steps, pathPoints })
+    return
+  }
+
+  try {
+    console.log(`开始处理${type}类型路段的步骤，共 ${steps.length} 个步骤`)
+    let validPointCount = 0
+    let invalidPointCount = 0
+
+    steps.forEach((step, stepIndex) => {
+      // 检查步骤是否有效
+      if (!step || typeof step !== 'object') {
+        console.warn(`${type}类型的步骤 ${stepIndex} 无效:`, step)
+        return
+      }
+
+      // 处理 polyline
+      if (step.polyline && typeof step.polyline === 'string') {
+        try {
+          // 分割 polyline 字符串获取坐标点
+          const polylinePoints = step.polyline.split(';')
+          
+          polylinePoints.forEach((point, pointIndex) => {
+            if (!point || !point.includes(',')) {
+              invalidPointCount++
+              return
+            }
+
+            const parts = point.split(',')
+            if (parts.length !== 2) {
+              invalidPointCount++
+              return
+            }
+
+            const lngStr = parts[0].trim()
+            const latStr = parts[1].trim()
+
+            // 验证坐标字符串格式
+            if (!(/^-?\d+\.?\d*$/.test(lngStr) && /^-?\d+\.?\d*$/.test(latStr))) {
+              invalidPointCount++
+              return
+            }
+
+            const lng = parseFloat(lngStr)
+            const lat = parseFloat(latStr)
+
+            // 验证坐标值是否有效
+            if (isValidCoordinate(lng, lat)) {
+              // 检查是否与上一个点重复（如果不是第一个点）
+              const lastPoint = pathPoints[pathPoints.length - 1]
+              if (!lastPoint || 
+                  Math.abs(lng - lastPoint[0]) > 0.0001 || 
+                  Math.abs(lat - lastPoint[1]) > 0.0001) {
+                pathPoints.push([lng, lat])
+                validPointCount++
+              }
+            } else {
+              invalidPointCount++
+              if (pointIndex === 0 || pointIndex === polylinePoints.length - 1) {
+                console.warn(`${type}类型步骤 ${stepIndex} 的${pointIndex === 0 ? '起点' : '终点'}坐标无效:`, 
+                  { lng, lat, original: point })
+              }
+            }
+          })
+
+        } catch (polylineError) {
+          console.error(`解析${type}类型步骤 ${stepIndex} 的polyline时出错:`, polylineError)
+        }
+      }
+
+      // 处理其他可能的坐标信息（如 start_location, end_location）
+      if (step.start_location) {
+        const startLng = parseFloat(step.start_location.longitude || step.start_location.lng)
+        const startLat = parseFloat(step.start_location.latitude || step.start_location.lat)
+        
+        if (isValidCoordinate(startLng, startLat)) {
+          const lastPoint = pathPoints[pathPoints.length - 1]
+          if (!lastPoint || 
+              Math.abs(startLng - lastPoint[0]) > 0.0001 || 
+              Math.abs(startLat - lastPoint[1]) > 0.0001) {
+            pathPoints.push([startLng, startLat])
+            validPointCount++
+          }
+        }
+      }
+
+      if (step.end_location) {
+        const endLng = parseFloat(step.end_location.longitude || step.end_location.lng)
+        const endLat = parseFloat(step.end_location.latitude || step.end_location.lat)
+        
+        if (isValidCoordinate(endLng, endLat)) {
+          const lastPoint = pathPoints[pathPoints.length - 1]
+          if (!lastPoint || 
+              Math.abs(endLng - lastPoint[0]) > 0.0001 || 
+              Math.abs(endLat - lastPoint[1]) > 0.0001) {
+            pathPoints.push([endLng, endLat])
+            validPointCount++
+          }
+        }
+      }
+    })
+
+    // 输出处理结果统计
+    console.log(`${type}类型路段处理完成:`, {
+      总步骤数: steps.length,
+      有效坐标点: validPointCount,
+      无效坐标点: invalidPointCount,
+      当前路径点总数: pathPoints.length
+    })
+
+  } catch (error) {
+    console.error(`处理${type}类型路段时发生错误:`, error)
   }
 }
 

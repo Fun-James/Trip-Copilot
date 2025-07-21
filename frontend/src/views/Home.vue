@@ -104,19 +104,26 @@
 
       <!-- 两栏内容区 -->
       <div class="content-columns">
-        <!-- 左侧栏 - 行程规划/对话记录切换 -->
+        <!-- 左侧栏 - 行程规划/对话记录/天气切换 -->
         <div class="left-column itinerary-panel">
           <div class="panel-header" style="display: flex; align-items: center; justify-content: space-between;">
             <el-button-group>
+              <el-button :type="activeTab === 'plan' ? 'primary' : 'default'" @click="activeTab = 'plan'">
+                <el-icon><Document /></el-icon> 旅行规划
+              </el-button>
               <el-button :type="activeTab === 'chat' ? 'primary' : 'default'" @click="activeTab = 'chat'">
                 <el-icon><ChatLineRound /></el-icon> 对话记录
               </el-button>
-              <el-button :type="activeTab === 'plan' ? 'primary' : 'default'" @click="activeTab = 'plan'">
-                <el-icon><Document /></el-icon> 旅行规划
+              <el-button :type="activeTab === 'weather' ? 'primary' : 'default'" @click="activeTab = 'weather'">
+                <el-icon><Sunny /></el-icon> 天气预报
               </el-button>
             </el-button-group>
           </div>
           <div class="messages-container" ref="messagesContainer">
+            <!-- 天气预报内容 -->
+            <template v-if="activeTab === 'weather'">
+              <WeatherForecast :location="searchQuery" />
+            </template>
             <!-- 旅行规划内容 -->
             <template v-if="activeTab === 'plan'">
               <div v-if="!currentPlan" class="welcome-message">
@@ -216,7 +223,7 @@
                 </div>
               </div>
             </template>
-            <!-- 对话记录内容 -->
+           <!-- 对话记录内容 -->
             <template v-else-if="activeTab === 'chat'">
               <div v-if="messages.length === 0">
                 <div class="welcome-message">
@@ -345,6 +352,8 @@
                 <el-radio-group v-model="routeForm.mode" size="small">
                   <el-radio-button value="driving">驾车</el-radio-button>
                   <el-radio-button value="walking">步行</el-radio-button>
+                  <el-radio-button value="bicycling">骑行</el-radio-button>
+                  <el-radio-button value="transit">公交</el-radio-button>
                 </el-radio-group>
               </div>
               
@@ -411,6 +420,7 @@ import { Search, Menu, Edit, Document, MapLocation, Location, ChatLineRound, Sta
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
 import MapDisplay from '@/components/MapDisplay.vue'
+import WeatherForecast from '@/components/WeatherForecast.vue'
 import { Clock } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import { useRouter } from 'vue-router'
@@ -432,6 +442,7 @@ export default {
     LocationFilled,
     Loading,
     MapDisplay,
+    WeatherForecast,
     SwitchButton
   },
   setup() {
@@ -464,8 +475,8 @@ export default {
     const chatHistory = ref([])
     const currentChatId = ref(null)
     const mapDisplayRef = ref(null)
-    // 新增：tab切换，默认进入对话记录
-    const activeTab = ref('chat') // 'chat' or 'plan'
+    // 新增：tab切换
+    const activeTab = ref('plan') // 'plan' or 'chat'
 
     // 退出登录处理函数
     const handleLogout = () => {
@@ -1146,7 +1157,9 @@ export default {
     const getModeText = (mode) => {
       const modeMap = {
         'driving': '驾车',
-        'walking': '步行'
+        'walking': '步行',
+        'bicycling': '骑行',
+        'transit': '公交'
       }
       return modeMap[mode] || mode
     }
