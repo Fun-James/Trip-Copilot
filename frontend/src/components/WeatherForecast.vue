@@ -36,6 +36,7 @@
 </template>
 
 <script setup>
+
 import { ref, watch } from 'vue'
 import { Loading, Warning, Sunny, Cloudy, Lightning, Moon } from '@element-plus/icons-vue'
 
@@ -60,18 +61,27 @@ const getWeatherIcon = (description) => {
   return 'Sunny'
 }
 
+
+// 提取城市名（如“重庆的2天行程”只取“重庆”）
+const extractCityName = (locationStr) => {
+  if (!locationStr) return ''
+  // 匹配“xxx的xx行程”或“xxx”
+  const match = locationStr.match(/([\u4e00-\u9fa5]+)(?:的.*)?$/)
+  return match ? match[1] : locationStr
+}
+
 // 获取天气预报数据
 const fetchWeatherData = async (location) => {
-  if (!location) {
+  const city = extractCityName(location)
+  if (!city) {
     error.value = '请选择目的地'
     return
   }
 
   loading.value = true
   error.value = ''
-
-try {
-    const response = await fetch(`http://localhost:8000/api/weather/${encodeURIComponent(location)}`)
+  try {
+    const response = await fetch(`http://localhost:8000/api/weather/${encodeURIComponent(city)}`)
     const data = await response.json()
     console.log(data)
     if (data.success) {
@@ -96,23 +106,28 @@ watch(() => props.location, async (newLocation) => {
 
 <style scoped>
 .weather-forecast {
-  background: var(--el-bg-color);
-  border-radius: 8px;
-  padding: 24px;
-  margin: 20px;
-  box-shadow: var(--el-box-shadow-lighter);
-  width: calc(100% - 40px);
-  height: auto;
-  min-height: 300px;
+  background: linear-gradient(135deg, #f8fbff 0%, #f2f6fa 100%);
+  border-radius: 28px;
+  padding: 40px 32px 32px 32px;
+  margin: 36px auto;
+  box-shadow: 0 8px 32px rgba(80,120,200,0.10), 0 2px 12px rgba(0,0,0,0.06), var(--el-box-shadow-lighter);
+  border: 1.5px solid #e3eaf2;
+  max-width: 820px;
+  width: 100%;
+  min-width: 320px;
+  min-height: 320px;
   display: flex;
   flex-direction: column;
+  align-items: center;
+  transition: box-shadow 0.3s, border-color 0.3s;
+  box-sizing: border-box;
 }
 
 .weather-header {
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 24px;
+  margin-bottom: 32px;
   flex-direction: column;
   text-align: center;
   gap: 8px;
@@ -142,53 +157,73 @@ watch(() => props.location, async (newLocation) => {
   color: var(--el-text-color-secondary);
 }
 
+
 .forecast-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 20px;
+  display: flex;
+  flex-direction: row;
+  gap: 28px;
   padding: 16px 0;
   width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  justify-content: flex-start;
+  box-sizing: border-box;
+  overflow-x: auto;
+  /* 横向滚动条样式 */
+  scrollbar-height: thin;
 }
+
 
 .forecast-item {
   text-align: center;
-  padding: 20px;
-  border-radius: 12px;
+  padding: 24px 18px;
+  border-radius: 18px;
   background: var(--el-fill-color-lighter);
-  transition: all 0.3s;
-  box-shadow: var(--el-box-shadow-lighter);
+  transition: box-shadow 0.3s, transform 0.3s;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06), var(--el-box-shadow-lighter);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   height: 100%;
+  border: 1px solid var(--el-border-color);
+  position: relative;
+  overflow: hidden;
+  min-width: 160px;
+  max-width: 220px;
+  flex: 1 1 180px;
 }
 
 .forecast-item:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--el-box-shadow-light);
+  transform: translateY(-6px) scale(1.03);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.12), var(--el-box-shadow-light);
+  border-color: var(--el-color-primary);
 }
 
 .forecast-date {
-  font-size: 14px;
-  color: var(--el-text-color-primary);
-  margin-bottom: 8px;
+  font-size: 15px;
+  color: var(--el-color-primary);
+  margin-bottom: 10px;
+  font-weight: 500;
 }
 
 .forecast-icon {
-  font-size: 36px;
+  font-size: 44px;
   color: var(--el-color-primary);
-  margin: 16px 0;
+  margin: 18px 0;
+  filter: drop-shadow(0 2px 8px rgba(0,0,0,0.08));
 }
 
 .forecast-temp {
-  margin: 8px 0;
+  margin: 10px 0;
   display: flex;
   justify-content: center;
-  gap: 8px;
+  gap: 10px;
+  font-size: 18px;
 }
 
 .temp-high {
   color: var(--el-color-danger);
+  font-weight: bold;
 }
 
 .temp-low {
@@ -196,8 +231,9 @@ watch(() => props.location, async (newLocation) => {
 }
 
 .forecast-desc {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--el-text-color-secondary);
+  margin: 6px 0 2px 0;
 }
 
 /* 自定义滚动条样式 */
@@ -222,12 +258,40 @@ watch(() => props.location, async (newLocation) => {
 .forecast-details {
   font-size: 12px;
   color: var(--el-text-color-secondary);
-  margin-top: 8px;
+  margin-top: 10px;
   text-align: center;
   padding: 0 8px;
+  opacity: 0.85;
 }
 
 .forecast-details div {
   margin: 4px 0;
+}
+@media (max-width: 900px) {
+  .weather-forecast {
+    padding: 12px 2px;
+    max-width: 100vw;
+    margin: 10px auto;
+  }
+  .forecast-list {
+    gap: 12px;
+    padding: 8px 0;
+    max-width: 100vw;
+    overflow-x: auto;
+  }
+  .forecast-item {
+    padding: 12px 2px;
+    border-radius: 12px;
+    min-width: 120px;
+    max-width: 180px;
+    flex: 1 1 120px;
+    margin: 0 auto;
+  }
+  .forecast-icon {
+    font-size: 32px;
+  }
+  .forecast-temp {
+    font-size: 14px;
+  }
 }
 </style>

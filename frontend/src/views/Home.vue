@@ -1981,8 +1981,10 @@ export default {
 
 /* 历史对话样式 */
 .chat-history {
-  flex: 1;
-  margin-top: 20px;
+flex: 1;
+margin-top: 20px;
+overflow-y: auto;
+max-height: 320px;
 }
 
 .history-title {
