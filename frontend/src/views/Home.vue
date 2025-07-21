@@ -1780,6 +1780,7 @@ export default {
 .sidebar-content {
   flex: 1;
   overflow-y: auto;
+  min-height: 0;
 }
 
 .sidebar-footer {
@@ -1921,10 +1922,11 @@ export default {
 
 /* 历史对话样式 */
 .chat-history {
-flex: 1;
-margin-top: 20px;
-overflow-y: auto;
-max-height: 320px;
+  flex: 1;
+  margin-top: 20px;
+  overflow-y: auto;
+  min-height: 0;
+  /* max-height: 320px; 移除此限制 */
 }
 
 .history-title {
