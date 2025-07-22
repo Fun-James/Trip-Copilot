@@ -192,7 +192,7 @@
                         ></div>
                         
                         <!-- 当有内容但仍在加载时显示光标 -->
-                        <span v-if="message.content !== '' && chatLoading" class="typing-cursor">|</span>
+                        <span v-if="message.content !== '' && chatLoading && message.id === lastAssistantMessageId" class="typing-cursor">|</span>
                       </div>
                       
                       <div class="message-time" style="font-size: 11px; margin-top: 3px;">{{ formatTime(message.timestamp) }}</div>
@@ -446,7 +446,7 @@
 </template>
 
 <script>
-import { ref, nextTick, onMounted } from 'vue'
+import { ref, nextTick, onMounted, computed } from 'vue'
 import { Search, Menu, Edit, Document, MapLocation, Location, ChatLineRound, Star, Refresh, CloseBold, Guide, LocationFilled, Loading, SwitchButton, Sunny } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
@@ -612,6 +612,16 @@ export default {
     const chatInput = ref('')
     const chatLoading = ref(false)
     const newChatLoading = ref(false) // 新增：新对话加载状态
+
+    // 计算属性：获取最后一条assistant消息的id
+    const lastAssistantMessageId = computed(() => {
+      for (let i = messages.value.length - 1; i >= 0; i--) {
+        if (messages.value[i].type === 'assistant') {
+          return messages.value[i].id
+        }
+      }
+      return null
+    })
 
     //新增获取路径规划方式
     const getTransportText = (mode) => {
