@@ -427,10 +427,9 @@
                   <span class="label">方式:</span>
                   <span class="value">{{ getModeText(routeInfo.mode) }}</span>
                 </div>
-                 <div class="summary-item" v-if="routeInfo.mode === 'transit'">
+                <div class="summary-item" v-if="routeInfo.mode === 'transit'">
                   <span class="label">预计花费:</span>
                   <span class="value">{{ routeInfo.cost ? `¥${routeInfo.cost}` : '¥0' }}</span>
-                </div>
               </div>
             </div>
           </div>
@@ -452,7 +451,7 @@
 <script>
 import { ref, nextTick, onMounted, computed } from 'vue'
 import { Search, Menu, Edit, Document, MapLocation, Location, ChatLineRound, Star, Refresh, CloseBold, Guide, LocationFilled, Loading, SwitchButton, Sunny } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
 import MapDisplay from '@/components/MapDisplay.vue'
 import WeatherForecast from '@/components/WeatherForecast.vue'
@@ -1106,14 +1105,23 @@ export default {
           // 更新路径信息
           const routeData = pathData.route_info
           if (routeData) {
+          if (routeData && routeData.paths && routeData.paths.length > 0) {
             if(routeData.paths && routeData.paths.length > 0){
+            const path = routeData.paths[0]
               const path = routeData.paths[0]
+            routeInfo.value = {
               routeInfo.value = {
+              distance: path.distance,
                 distance: path.distance,
+              duration: path.duration,
                 duration: path.duration,
+              mode: pathData.mode
                 mode: pathData.mode
+            }
               }
+            if (!isAutoInit) {
               if (!isAutoInit) {
+              console.log('路径信息更新:', routeInfo.value)
                 console.log('路径信息更新:', routeInfo.value)
               }}
             else if(routeData.transits && routeData.transits.length > 0){
@@ -1127,7 +1135,7 @@ export default {
               if (!isAutoInit) {
                 console.log('路径信息更新:', routeInfo.value)
               }}
-            }
+             }
           
           // 更新地图中心
           if (isAutoInit) {
@@ -1370,9 +1378,74 @@ export default {
         addMessage(errorMessage, 'assistant')
       }
     }
-    
+
     /**
-     * 处理聊天提交（流式响应版本，增加智能旅行规划检测）
+     * 显示意图确认对话框
+     * 提供更详细的选项和上下文信息，帮助用户做出明确选择
+     */
+    const showIntentConfirmation = (userMessage) => {
+      // 提取消息中的关键部分，用于对话框显示
+      const displayMessage = userMessage.length > 40 ? 
+                            userMessage.substring(0, 37) + '...' : 
+                            userMessage;
+      
+      // 分析消息中可能的行程修改意图
+      let intentAnalysis = '我无法确定您是想：';
+      
+      // 提取可能的动作（添加/删除/修改）
+      if (/添加|增加|加上|新增|加入/.test(userMessage)) {
+        intentAnalysis += '向行程添加新的地点/活动';
+      } else if (/删除|去掉|移除|取消|不去/.test(userMessage)) {
+        intentAnalysis += '从行程中删除某个地点/活动';
+      } else if (/修改|更改|调整|变更|改为|换成/.test(userMessage)) {
+        intentAnalysis += '修改行程中的某个安排';
+      } else if (/第[一二三四五六七八九十\d]+天/.test(userMessage)) {
+        intentAnalysis += '调整特定天的行程';
+      } else {
+        intentAnalysis += '修改当前的行程规划';
+      }
+      
+      intentAnalysis += '，还是只是想聊天或询问信息？';
+      
+      // 构建更信息丰富的确认内容
+      const confirmContent = `
+        <div style="margin-bottom: 15px;">
+          <strong style="color: #1a73e8;">您的输入:</strong> 
+          <div style="background: #f8f9fa; padding: 8px; margin-top: 5px; border-radius: 4px; border-left: 3px solid #1a73e8;">
+            "${displayMessage}"
+          </div>
+        </div>
+        <div>${intentAnalysis}</div>
+      `;
+      
+      return new Promise((resolve) => {
+        ElMessageBox.confirm(
+          confirmContent,
+          '请确认您的意图',
+          {
+            distinguishCancelAndClose: true,
+            confirmButtonText: '是的，我想修改行程',
+            cancelButtonText: '只是普通聊天/提问',
+            dangerouslyUseHTMLString: true,
+            closeOnClickModal: false,
+            closeOnPressEscape: false,
+            type: 'info',
+            customClass: 'intent-confirmation-dialog'
+          }
+        ).then(() => {
+          resolve('modify') // 用户选择修改行程
+        }).catch((action) => {
+          if (action === 'cancel') {
+            resolve('chat') // 用户选择普通聊天
+          } else {
+            resolve('chat') // 关闭对话框默认为普通聊天
+          }
+        })
+      })
+    }
+
+    /**
+     * 处理聊天提交 - 增强版，支持更精确的意图识别与状态跟踪
      */
     const handleChatSubmit = async () => {
       if (!chatInput.value.trim()) {
@@ -1381,29 +1454,147 @@ export default {
       }
       
       const userMessage = chatInput.value.trim()
-      chatInput.value = ''
-      chatLoading.value = true
-      
-      // 添加用户消息
       addMessage(userMessage, 'user')
-      
-      // 首先，尝试调用后端解析用户意图
-      try {
-        const parseResponse = await axios.post('http://localhost:8000/api/trip/parse-query', {
-          query: userMessage
-        });
+      chatInput.value = ''
 
-        // 如果后端成功解析出旅行规划意图
-        if (parseResponse.data.success && parseResponse.data.data.destination && parseResponse.data.data.is_plan) {
-          const { destination, duration, start_point } = parseResponse.data.data;
-          chatLoading.value = false; // 停止聊天加载，转为规划流程
-          await executeTravelPlan(destination, duration, start_point);
-          saveCurrentChat();
-          return;
+      try {
+        // 添加输入历史跟踪（为后续分析做准备）
+        if (!window.userInputHistory) window.userInputHistory = [];
+        window.userInputHistory.push({
+          message: userMessage,
+          timestamp: new Date().getTime()
+        });
+        
+        // 如果历史记录超过10条，保留最新的10条
+        if (window.userInputHistory.length > 10) {
+          window.userInputHistory = window.userInputHistory.slice(-10);
+        }
+        
+        // 调用后端API进行意图识别
+        try {
+          console.log('调用后端API进行意图识别...');
+          // 构建请求参数，将当前行程传递给后端用于更准确的意图判断
+          const requestData = {
+            query: userMessage,
+            current_plan: currentPlan.value
+          };
+          
+          const parseResponse = await axios.post('http://localhost:8000/api/trip/parse-query', requestData);
+          
+          if (parseResponse.data.success) {
+            const intentData = parseResponse.data.data;
+            console.log('意图分析结果:', intentData);
+            
+            // 判断意图类型
+            if (intentData.needs_confirmation) {
+              // 置信度不高，需要用户确认
+              console.log('意图不确定，显示确认对话框');
+              const userChoice = await showIntentConfirmation(userMessage);
+              console.log('用户选择:', userChoice);
+              if (userChoice === 'modify') {
+                await handleItineraryUpdate(userMessage);
+              } else {
+                await handleRegularChatOrInitialPlan(userMessage);
+              }
+            } else if (intentData.intent_type === 'modify') {
+              // 明确是行程修改
+              console.log('判断为行程修改请求，调用handleItineraryUpdate');
+              await handleItineraryUpdate(userMessage);
+            } else if (intentData.intent_type === 'new_plan') {
+              // 新的行程规划请求
+              console.log('判断为新行程规划请求');
+              const { destination, duration, start_point } = intentData;
+              await executeTravelPlan(destination, duration, start_point);
+            } else {
+              // 普通聊天
+              console.log('判断为普通聊天请求，调用handleRegularChatOrInitialPlan');
+              await handleRegularChatOrInitialPlan(userMessage);
+            }
+          } else {
+            // 意图识别失败，默认为普通聊天
+            console.warn('意图识别失败，默认按普通聊天处理');
+            await handleRegularChatOrInitialPlan(userMessage);
+          }
+        } catch (error) {
+          console.warn('调用意图识别API失败，按普通聊天处理:', error);
+          await handleRegularChatOrInitialPlan(userMessage);
         }
       } catch (error) {
-        console.warn('调用查询解析API失败或未识别出规划意图，将按普通聊天处理:', error);
+        console.error('处理聊天提交时出错:', error);
+        ElMessage.error('处理您的请求时出错，请稍后重试');
+        chatLoading.value = false;
       }
+    }
+
+    // **新增函数：处理行程更新**
+    const handleItineraryUpdate = async (modificationRequest) => {
+      chatLoading.value = true
+      try {
+        const response = await axios.post('http://localhost:8000/api/trip/update', {
+          current_plan: currentPlan.value,
+          modification_request: modificationRequest
+        })
+
+        if (response.data.success && response.data.updated_plan) {
+          currentPlan.value = response.data.updated_plan
+          addMessage('好的，您的行程已更新。请在"旅行规划"标签页中查看。', 'assistant')
+
+          // 关键：切换到规划视图并更新地图显示
+          activeTab.value = 'plan'
+          await nextTick()
+          updateMapWithPlan(currentPlan.value)
+          selectDay(selectedDay.value || 1) // 刷新当前或第一天的地图路线
+
+        } else {
+          // 处理后端返回的错误
+          let errorMessage = response.data.error_message || '未知错误'
+          
+          // 检查是否是模型输入长度限制错误
+          if (errorMessage.includes('InvalidParameter') && errorMessage.includes('Range of input length')) {
+            errorMessage = '当前行程过于复杂，暂时无法修改。建议您重新生成一个简化的行程。'
+          } else if (errorMessage.includes('Algo.InvalidParameter')) {
+            errorMessage = '您的修改请求过于复杂，请尝试使用更简单的描述，例如："删除第一天的xxx"或"换成yyy"。'
+          }
+          
+          addMessage(`抱歉，更新行程时遇到问题：${errorMessage}`, 'assistant')
+        }
+      } catch (error) {
+        console.error('更新行程失败:', error)
+        
+        // 处理网络错误和服务器错误
+        let errorMessage = '抱歉，连接服务器失败，无法更新您的行程。'
+        
+        if (error.response && error.response.data) {
+          if (error.response.data.error_message) {
+            let backendError = error.response.data.error_message
+            
+            // 检查是否是模型输入长度限制错误
+            if (backendError.includes('InvalidParameter') && backendError.includes('Range of input length')) {
+              errorMessage = '当前行程过于复杂，暂时无法修改。建议您重新生成一个简化的行程。'
+            } else if (backendError.includes('Algo.InvalidParameter')) {
+              errorMessage = '您的修改请求过于复杂，请尝试使用更简单的描述，例如："删除第一天的xxx"或"换成yyy"。'
+            } else {
+              errorMessage = `服务器错误：${backendError}`
+            }
+          } else if (error.response.status === 500) {
+            errorMessage = '服务器内部错误，请稍后重试。'
+          } else if (error.response.status === 400) {
+            errorMessage = '请求格式错误，请重新尝试。'
+          }
+        } else if (error.code === 'NETWORK_ERROR') {
+          errorMessage = '网络连接失败，请检查网络设置。'
+        }
+        
+        addMessage(errorMessage, 'assistant')
+      } finally {
+        chatLoading.value = false
+        saveCurrentChat()
+      }
+    }
+
+    // 处理普通聊天或初次规划逻辑 - 主要是流式聊天功能
+    const handleRegularChatOrInitialPlan = async (userMessage) => {
+      chatLoading.value = true
       
       // 如果不是旅行规划请求，继续正常的聊天流程
       // 创建一个临时的助手消息用于流式更新
@@ -1798,6 +1989,10 @@ export default {
       chatLoading,
       newChatLoading,
       handleChatSubmit,
+      handleItineraryUpdate,
+      handleRegularChatOrInitialPlan,
+      // isItineraryModificationIntent, // 已迁移到后端
+      showIntentConfirmation,
       fillExampleText,
       // 功能函数
       handleSearch,
@@ -1825,7 +2020,8 @@ export default {
       LocationFilled,
       Loading,
       activeTab,
-      renderMarkdown
+      renderMarkdown,
+      lastAssistantMessageId
     }
   }
 }
@@ -2921,5 +3117,48 @@ color: #5f6368;
   margin-left: 8px;
   font-weight: bold;
   color: #1a73e8;
+}
+
+/* 意图确认对话框样式 */
+:deep(.intent-confirmation-dialog) {
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+}
+
+:deep(.intent-confirmation-dialog .el-message-box__header) {
+  padding: 20px 20px 10px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+:deep(.intent-confirmation-dialog .el-message-box__title) {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1a73e8;
+}
+
+:deep(.intent-confirmation-dialog .el-message-box__content) {
+  padding: 20px;
+  font-size: 14px;
+  color: #5f6368;
+  line-height: 1.5;
+}
+
+:deep(.intent-confirmation-dialog .el-message-box__btns) {
+  padding: 10px 20px 20px;
+  text-align: right;
+}
+
+:deep(.intent-confirmation-dialog .el-button--primary) {
+  background-color: #1a73e8;
+  border-color: #1a73e8;
+  border-radius: 6px;
+  padding: 8px 16px;
+}
+
+:deep(.intent-confirmation-dialog .el-button--default) {
+  border-color: #dadce0;
+  color: #5f6368;
+  border-radius: 6px;
+  padding: 8px 16px;
 }
 </style>
