@@ -48,88 +48,8 @@ Trip-Copilot/
 
 ---
 
-## 快速开始
 
 
-### 后端启动（FastAPI）
-
-1. 进入后端目录：
-   ```powershell
-   cd backend
-   ```
-2. 创建虚拟环境（推荐）：
-   ```powershell
-   python -m venv venv
-   ```
-3. 激活虚拟环境：
-   - Windows:
-     ```powershell
-     .\venv\Scripts\activate
-     ```
-   - macOS/Linux:
-     ```bash
-     source venv/bin/activate
-     ```
-4. 安装依赖：
-   ```powershell
-   pip install -r requirements.txt
-   ```
-5. 启动后端服务：
-   ```powershell
-   python main.py
-   ```
-
-> 默认后端服务地址：http://localhost:8000
-
----
-
-### 前端启动（Vue 3 + Vite）
-
-1. 进入前端目录：
-   ```powershell
-   cd frontend
-   ```
-2. 安装依赖：
-   ```powershell
-   npm install
-   ```
-3. 启动开发服务器：
-   ```powershell
-   npm run dev
-   ```
-
-> 默认前端访问地址：http://localhost:3000
-
-
----
-
-## API 接口文档
-
-
-### 后端 API 端点
-
-- `GET /` - 根路径，返回欢迎消息
-- `GET /health` - 健康检查
-- `POST /api/trip/suggest` - 获取旅行建议
-- `GET /api/destinations/popular` - 获取热门目的地
-
-
-### 示例请求
-
-```bash
-# 获取旅行建议
-curl -X POST "http://localhost:8000/api/trip/suggest" ^
-     -H "Content-Type: application/json" ^
-     -d "{
-       \"destination\": \"北京\",
-       \"duration\": 5,
-       \"budget\": 3000,
-       \"interests\": [\"历史\", \"美食\"]
-     }"
-```
-
-
----
 
 ## 功能特性
 
@@ -151,40 +71,31 @@ curl -X POST "http://localhost:8000/api/trip/suggest" ^
 
 ---
 
-## 开发指南
-
-
-### 添加新的 API 端点
-1. 在 `backend/main.py` 中添加新的路由：
-   ```python
-   @app.get("/api/new-endpoint")
-   async def new_endpoint():
-       return {"message": "新的API端点"}
-   ```
-
-### 添加新的前端页面
-1. 在 `frontend/src/views/` 创建新的 Vue 组件
-2. 在 `frontend/src/router/index.js` 中添加路由配置
-
 
 ---
 
-## 部署说明
+## 使用指南
 
+1. **登录/注册**
+   - 首次进入页面会跳转到登录/注册界面，输入用户名和密码即可注册或登录（本地存储，无需邮箱/手机号）。
+   - 登录成功后自动进入主页面。
 
-### 前端部署
-```powershell
-cd frontend
-npm run build
-```
-构建产物在 `frontend/dist` 目录，可部署至任意静态服务器（如 nginx、Vercel、Netlify 等）。
+2. **智能对话与行程规划**
+   - 左侧可新建对话或切换历史对话。
+   - 主界面顶部输入“目的地”和“天数”，点击“开始规划”按钮，系统会生成个性化行程建议。
+   -也可以直接和智能助手对话，智能助手会智能提取目的地和天数。
+   - 在“对话记录”Tab下可与智能助手自由对话，直接输入旅行相关问题或点击示例问题快速体验。
 
-### 后端部署
-推荐使用 uvicorn 部署生产环境：
-```powershell
-uvicorn main:app --host 0.0.0.0 --port 8000
-```
+3. **热门目的地与天气**
+   - 切换左侧Tab可查看“旅行规划”或“天气预报”。
+   - 天气预报会根据输入的目的地展示对应天气信息。
 
+4. **地图与路径规划**
+   - 右侧为地图展示区，自动显示推荐行程的地理位置。
+   - 点击“路径规划”按钮可输入起点、终点，并选择出行方式（驾车/步行/骑行/公交），点击“规划路线”即可在地图上显示路径和距离、时间等信息。
+
+5. **退出登录**
+   - 左下角点击“退出登录”按钮可安全退出账号。
 
 ---
 
@@ -204,41 +115,3 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 - Pydantic
 - Python 3.8+
 
-
----
-
-## 贡献指南
-
-1. Fork 项目
-2. 创建功能分支（如：`feature/xxx`）
-3. 提交更改并推送到远程分支
-4. 创建 Pull Request，描述你的更改内容
-5. 等待审核与合并
-
-欢迎 issue 反馈和建议！
-
----
-
-## 常见问题（FAQ）
-
-**Q: 前端/后端端口冲突怎么办？**
-A: 可在 `vite.config.js` 或 `main.py`/`uvicorn` 命令中自定义端口。
-
-**Q: 如何跨域访问？**
-A: FastAPI 已开启 CORS 支持，前端无需额外配置。
-
-**Q: 启动报错依赖缺失？**
-A: 请确保已正确安装依赖，且 Python/Node 版本符合要求。
-
----
-
-## 联系方式
-
-如有问题或合作意向，请通过 issue 联系项目维护者。
-
-
----
-
-## 许可证
-
-MIT License
