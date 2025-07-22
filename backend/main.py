@@ -189,7 +189,7 @@ def get_location_coordinates_poi(location: str, city: Optional[str] = None):
     """通过POI搜索获取旅游景点的精确坐标"""
     try:
         # 添加延迟避免QPS限制（免费版3次/秒）
-        time.sleep(0.4)  # 等待400ms
+          # 等待400ms
         
         api_key = get_amap_api_key()
         url = f"https://restapi.amap.com/v3/place/text"
@@ -265,7 +265,7 @@ def get_location_coordinates_geocode(location: str, city: Optional[str] = None):
     """通过地理编码获取地点坐标（备用方法）"""
     try:
         # 添加延迟避免QPS限制（免费版3次/秒）
-        time.sleep(0.4)  # 等待400ms
+          # 等待400ms
         
         api_key = get_amap_api_key()
         url = f"https://restapi.amap.com/v3/geocode/geo"
@@ -322,7 +322,7 @@ def get_route_planning(start_coords: tuple, end_coords: tuple, mode: str = "driv
     """获取两点间的路径规划"""
     try:
         # 添加延迟避免QPS限制（免费版3次/秒）
-        time.sleep(0.4)  # 等待400ms
+          # 等待400ms
         
         api_key = get_amap_api_key()
         origin = f"{start_coords[0]},{start_coords[1]}"
@@ -723,7 +723,7 @@ def get_transportation_text(mode):
 def get_transit_time(start_lng, start_lat, end_lng, end_lat, mode="driving"):
     """使用高德地图API计算两点间的实际交通时间，并提取换乘路线"""
     try:
-        time.sleep(0.4)
+        
         api_key = get_amap_api_key()
         origin = f"{start_lng},{start_lat}"
         destination = f"{end_lng},{end_lat}"
@@ -843,7 +843,7 @@ def get_transit_time(start_lng, start_lat, end_lng, end_lat, mode="driving"):
 def extract_city_from_coords(lng, lat):
     """从坐标反查所在城市"""
     try:
-        time.sleep(0.4)
+        
         api_key = get_amap_api_key()
         url = "https://restapi.amap.com/v3/geocode/regeo"
         
@@ -913,7 +913,7 @@ def recommend_transportation(start_lng, start_lat, end_lng, end_lat, distance_km
 def has_nearby_transit_station(lng, lat, radius=500):
     """检查指定坐标附近是否有公交或地铁站"""
     try:
-        time.sleep(0.4)  # 避免QPS限制
+          # 避免QPS限制
         api_key = get_amap_api_key()
         url = "https://restapi.amap.com/v3/place/around"
         
