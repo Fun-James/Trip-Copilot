@@ -442,8 +442,8 @@ def get_amap_api_key():
 def get_location_coordinates_poi(location: str, city: Optional[str] = None):
     """通过POI搜索获取旅游景点的精确坐标"""
     try:
-        # 添加延迟避免QPS限制（免费版3次/秒）
-        time.sleep(0.4)  # 等待400ms，确保QPS不超过3次/秒
+        
+          
         
         api_key = get_amap_api_key()
         url = f"https://restapi.amap.com/v3/place/text"
@@ -518,8 +518,8 @@ def get_location_coordinates_poi(location: str, city: Optional[str] = None):
 def get_location_coordinates_geocode(location: str, city: Optional[str] = None):
     """通过地理编码获取地点坐标（备用方法）"""
     try:
-        # 添加延迟避免QPS限制（免费版3次/秒）
-        time.sleep(0.4)  # 等待400ms，确保QPS不超过3次/秒
+        
+          
         
         api_key = get_amap_api_key()
         url = f"https://restapi.amap.com/v3/geocode/geo"
@@ -575,8 +575,8 @@ def get_location_coordinates(location: str, city: Optional[str] = None):
 def get_route_planning(start_coords: tuple, end_coords: tuple, mode: str = "driving", start_location: str = "", end_location: str = ""):
     """获取两点间的路径规划"""
     try:
-        # 添加延迟避免QPS限制（免费版3次/秒）
-        time.sleep(0.4)  # 等待400ms，确保QPS不超过3次/秒
+        
+          
         
         api_key = get_amap_api_key()
         origin = f"{start_coords[0]},{start_coords[1]}"
