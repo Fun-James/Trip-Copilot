@@ -1252,22 +1252,93 @@ export default {
         tripDuration.value = duration
         
         // 显示正在规划的消息
-        const planningMessage = `正在为您规划${destination}${duration}天的旅行行程，请稍候...`
-        addMessage(planningMessage, 'assistant')
+        const assistantMessage = {
+          id: Date.now() + '_assistant',
+          content: '',
+          type: 'assistant',
+          timestamp: new Date()
+        }
+        messages.value.push(assistantMessage)
+      
+        const response = await fetch('http://localhost:8000/api/trip/streamplan', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            destination: destination,
+            duration: duration,
+          })
+        })
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`)
+        }
         
-        // 调用行程规划API
-        const response = await axios.post('http://localhost:8000/api/trip/plan', {
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        
+        while (true) {
+          const { value, done } = await reader.read()
+          if (done) break
+          
+          const chunk = decoder.decode(value)
+          const lines = chunk.split('\n')
+          
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6))
+                
+                if (data.type === 'chunk' && data.content) {
+                  // 流式更新助手消息内容
+                  assistantMessage.content += data.content
+                  
+                  // 触发响应式更新
+                  messages.value = [...messages.value]
+                  
+                  // 自动滚动到底部
+                  nextTick(() => {
+                    if (messagesContainer.value) {
+                      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+                    }
+                  })
+                } else if (data.type === 'error') {
+                  // 处理错误
+                  if (assistantMessage.content === '') {
+                    assistantMessage.content = data.content
+                  } else {
+                    assistantMessage.content += '\n\n' + data.content
+                  }
+                  messages.value = [...messages.value]
+                  break
+                } else if (data.type === 'end') {
+                  // 流结束
+                  break
+                }
+              } catch (e) {
+                console.error('解析SSE数据失败:', e)
+              }
+            }
+          }
+        }
+        
+        const waitMessage = '正在为您绘制更详细的行程规划，请稍候...'
+        addMessage(waitMessage, 'assistant')
+
+        const response1 = await axios.post('http://localhost:8000/api/trip/plan', {
+          plan: assistantMessage.content,
           destination: destination,
           duration: duration
         })
-        
-        if (response.data.success && response.data.plan_data) {
+
+        if (response1.data.success && response1.data.plan_data) {
           // 更新当前行程规划
-          currentPlan.value = response.data.plan_data
+          currentPlan.value = response1.data.plan_data
           selectedDay.value = 1
           
           // 显示成功消息
-          const successMessage = `✅ 已为您成功规划${destination}${duration}天的旅行行程！\n\n行程包含${response.data.plan_data.itinerary.length}天的精彩安排，点击右侧地图查看详细路线，或切换到"旅行规划"标签查看完整行程。`
+          const successMessage = `✅ 已为您成功规划${destination}${duration}天的旅行行程！\n\n行程包含${response1.data.plan_data.itinerary.length}天的精彩安排，点击右侧地图查看详细路线，或切换到"旅行规划"标签查看完整行程。`
           addMessage(successMessage, 'assistant')
           
           // 自动跳转到旅行规划界面
@@ -1280,7 +1351,7 @@ export default {
           updateMapCenterFromQuery(destination)
           
         } else {
-          const errorMessage = `抱歉，无法为您规划${destination}的旅行行程。${response.data.error_message || '请稍后再试。'}`
+          const errorMessage = `抱歉，无法为您规划${destination}的旅行行程。${response1.data.error_message || '请稍后再试。'}`
           addMessage(errorMessage, 'assistant')
         }
       } catch (error) {
@@ -1313,7 +1384,7 @@ export default {
         });
 
         // 如果后端成功解析出旅行规划意图
-        if (parseResponse.data.success && parseResponse.data.data.destination) {
+        if (parseResponse.data.success && parseResponse.data.data.destination && parseResponse.data.data.is_plan) {
           const { destination, duration, start_point } = parseResponse.data.data;
           chatLoading.value = false; // 停止聊天加载，转为规划流程
           await executeTravelPlan(destination, duration, start_point);
@@ -1460,27 +1531,7 @@ export default {
 
       try {
         // 调用新的行程规划API
-        const response = await axios.post('http://localhost:8000/api/trip/plan', {
-          destination: destination,
-          duration: duration
-        })
-
-        if (response.data.success && response.data.plan_data) {
-          const planData = response.data.plan_data
-          currentPlan.value = planData
-          selectedDay.value = 1 // 默认选中第一天
-          
-          // 更新地图数据
-          updateMapWithPlan(planData)
-          
-          // 添加成功消息
-          addMessage(`已为您规划${destination}${duration}天的详细行程，请查看左侧面板和右侧地图`, 'assistant')
-          
-          ElMessage.success('行程规划完成！')
-        } else {
-          throw new Error(response.data.error_message || '行程规划失败')
-        }
-        
+        await executeTravelPlan(destination, duration)
         // 保存到历史记录
         saveCurrentChat()
       } catch (error) {

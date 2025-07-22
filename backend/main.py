@@ -45,6 +45,11 @@ class ItineraryPlanRequest(BaseModel):
     destination: str
     duration: int  # 天数，必填
 
+class FinePlanRequest(BaseModel):
+    plan: str
+    destination: str
+    duration: int
+
 class ItineraryPlanResponse(BaseModel):
     success: bool
     plan_data: Optional[dict] = None
@@ -116,12 +121,14 @@ async def parse_query_with_llm(request: QueryParseRequest):
         用户查询: "{request.query}"
 
         你需要提取以下信息：
-        1. "start_point": 出发地点 (如果没有提到，则为 null)
-        2. "destination": 目的地 (必须有)
-        3. "duration": 旅行天数 (如果没有提到，则默认为 3)
+        1. "is_plan": 判断是否是行程规划请求 (如果用户希望你为他规划出游计划或明确表达出想去某个地方进行为期若干天的旅行，则为 true，否则为 false)
+        2. "start_point": 出发地点 (如果没有提到，则为 null)
+        3. "destination": 目的地 (必须有)
+        4. "duration": 旅行天数 (如果没有提到，则默认为 3)
 
         请严格按照以下JSON格式返回，不要包含任何额外的解释性文字：
         {{
+          "is_plan": "...",
           "start_point": "...",
           "destination": "...",
           "duration": ...
@@ -176,33 +183,6 @@ def get_amap_api_key():
         raise ValueError("AMAP_API_KEY not found in environment variables")
     return api_key
 
-# 从地点名称中提取城市信息
-def extract_city_from_location(location: str):
-    """从地点名称中提取城市信息"""
-    # 常见城市列表
-    major_cities = [
-        "北京", "上海", "广州", "深圳", "杭州", "南京", "成都", "西安", 
-        "重庆", "武汉", "天津", "苏州", "青岛", "长沙", "大连", "厦门",
-        "福州", "哈尔滨", "济南", "昆明", "沈阳", "石家庄", "合肥", 
-        "郑州", "太原", "南昌", "贵阳", "南宁", "海口", "兰州", "银川",
-        "西宁", "乌鲁木齐", "拉萨", "呼和浩特"
-    ]
-    
-    # 先检查是否直接包含城市名
-    for city in major_cities:
-        if city in location:
-            return city
-    
-    # 如果没有找到，尝试从大学名称等推断
-    if "南开大学" in location:
-        return "天津"
-    elif "清华大学" in location or "北京大学" in location:
-        return "北京"
-    elif "复旦大学" in location or "上海交通大学" in location:
-        return "上海"
-    
-    # 默认返回全国
-    return "全国"
 
 # POI搜索获取地点坐标
 def get_location_coordinates_poi(location: str, city: Optional[str] = None):
@@ -354,8 +334,8 @@ def get_route_planning(start_coords: tuple, end_coords: tuple, mode: str = "driv
             url = "https://restapi.amap.com/v3/direction/transit/integrated"
             
             # 尝试从地点名称中提取城市
-            start_city = extract_city_from_location(start_location)
-            end_city = extract_city_from_location(end_location)
+            start_city = extract_city_from_coords(start_coords[0], start_coords[1])
+            end_city = extract_city_from_coords(end_coords[0], end_coords[1])
             
             # 如果起点和终点在同一个城市，使用该城市；否则使用全国
             if start_city != "全国" and end_city != "全国" and start_city == end_city:
@@ -955,26 +935,74 @@ def has_nearby_transit_station(lng, lat, radius=500):
         print(f"检查附近交通站点失败: {e}")
         return False
 
+@app.post("/api/trip/streamplan", response_model=ItineraryPlanResponse)
+async def get_trip_plan_stream(request: ItineraryPlanRequest):
+    def generate_response():
+        """生成行程规划的Server-Sent Events流"""
+        try:
+            llm = get_tongyi_client()
+            prompt = f"""请为用户制定一个详细的{request.destination}{request.duration}天旅行行程规划。
+
+            要求：
+            1. 为每一天按顺序推荐3-4个逻辑上顺路的地点
+            2. 每天都要有一个主题描述
+            3. 每个地点按照省市+具体地点名称的形式输出，不要包含区县名称，例如"四川省成都市武侯祠"而不是"四川省成都市武侯区武侯祠"
+            4. 为每个地点添加详细介绍
+            5. 为每个地点添加建议停留时间（小时）
+            6. 地点名称要具体准确，便于地图定位，格式为"省市+景点名称"
+            7. 不要包含区县信息，避免定位错误
+            8. 同一天的地点应该地理位置相对集中，便于游览
+            9. 每天3-4个地点即可，不要过多"""
+
+            messages = [
+                SystemMessage(content="你是一位专业友好的旅行助手，名叫Trip Copilot。你可以："),
+                HumanMessage(content=prompt)
+            ]
+
+            response = llm.stream(messages)
+            for chunk in response:
+                content = chunk.content
+                if isinstance(content, list):
+                    text_content = ""
+                    for item in content:
+                        if isinstance(item, dict) and "text" in item:
+                            text_content += item["text"]
+                        elif isinstance(item, str):
+                            text_content += item
+                    content = text_content
+                if content:
+                    # 发送 SSE 数据
+                    yield f"data: {json.dumps({'content': str(content), 'type': 'chunk'})}\n\n"
+            # 发送结束标记
+            yield f"data: {json.dumps({'type': 'end'})}\n\n"
+
+        except Exception as e:
+            # 发送错误信息
+            error_msg = f"抱歉，我遇到了一些技术问题。请稍后再试。错误信息：{str(e)}"
+            yield f"data: {json.dumps({'content': error_msg, 'type': 'error'})}\n\n"
+            yield f"data: {json.dumps({'type': 'end'})}\n\n"
+    
+    return StreamingResponse(
+        generate_response(),
+        media_type="text/plain",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Content-Type": "text/event-stream",
+        }
+    )
+
+
 # 新增行程规划API
 @app.post("/api/trip/plan", response_model=ItineraryPlanResponse)
-async def get_trip_plan(request: ItineraryPlanRequest):
+async def get_trip_plan(request: FinePlanRequest):
     """获取完整的行程规划，包含每日详细安排、地点坐标和路径规划数据"""
     try:
         # 获取通义千问客户端
         llm = get_tongyi_client()
         
         # 构建高级LLM Prompt
-        prompt = f"""
-        请为用户制定一个详细的{request.destination}{request.duration}天旅行行程规划。
-
-        要求：
-        1. 为每一天按顺序推荐3-4个逻辑上顺路的地点
-        2. 每天都要有一个主题描述
-        3. 必须严格按照以下JSON格式返回，不能有任何额外的解释性文字
-        4. 每个地点按照省市+具体地点名称的形式输出，不要包含区县名称，例如"四川省成都市武侯祠"而不是"四川省成都市武侯区武侯祠"
-        5. 为每个地点添加详细介绍
-        6. 为每个地点添加建议停留时间（小时）
-
+        prompt = f"""给你一个已经计划好的行程规划，你必须严格按照要求的JSON格式返回结果，每个地点按照省市+具体地点名称的形式输出。
         
         返回格式示例：
         {{
@@ -1019,19 +1047,12 @@ async def get_trip_plan(request: ItineraryPlanRequest):
             }}
           ]
         }}
-        
-        注意：
-        - 只返回JSON格式，不要其他任何文字
-        - 地点名称要具体准确，便于地图定位，格式为"省市+景点名称"
-        - 不要包含区县信息，避免定位错误
-        - 同一天的地点应该地理位置相对集中，便于游览
-        - 每天3-4个地点即可，不要过多
         """
         
         # 使用通义千问生成行程规划
         messages = [
-            SystemMessage(content="你是一位专业的旅行规划师，擅长制定详细的旅行行程。你必须严格按照要求的JSON格式返回结果。"),
-            HumanMessage(content=prompt)
+            SystemMessage(content=prompt),
+            HumanMessage(content=request.plan)
         ]
         
         response = llm.invoke(messages)
@@ -1046,7 +1067,6 @@ async def get_trip_plan(request: ItineraryPlanRequest):
                 elif isinstance(item, str):
                     text_content += item
             ai_content = text_content
-        
         # 解析JSON
         
         # 提取JSON部分
