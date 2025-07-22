@@ -433,7 +433,7 @@
               </div>
             </div>
           </div>
-          
+           </div>
           <div class="map-container">
             <MapDisplay 
               :itinerary-data="currentItinerary" 
@@ -1104,38 +1104,28 @@ export default {
           
           // 更新路径信息
           const routeData = pathData.route_info
-          if (routeData) {
           if (routeData && routeData.paths && routeData.paths.length > 0) {
-            if(routeData.paths && routeData.paths.length > 0){
             const path = routeData.paths[0]
-              const path = routeData.paths[0]
             routeInfo.value = {
-              routeInfo.value = {
               distance: path.distance,
-                distance: path.distance,
               duration: path.duration,
-                duration: path.duration,
               mode: pathData.mode
-                mode: pathData.mode
             }
-              }
             if (!isAutoInit) {
-              if (!isAutoInit) {
               console.log('路径信息更新:', routeInfo.value)
-                console.log('路径信息更新:', routeInfo.value)
-              }}
-            else if(routeData.transits && routeData.transits.length > 0){
-              const path = routeData.transits[0]
-              routeInfo.value = {
-                distance: routeData.distance,
-                duration: path.duration,
-                cost: path.cost,
-                mode: 'transit'
-              }
-              if (!isAutoInit) {
-                console.log('路径信息更新:', routeInfo.value)
-              }}
-             }
+            }
+          } else if (routeData && routeData.transits && routeData.transits.length > 0) {
+            const path = routeData.transits[0]
+            routeInfo.value = {
+              distance: routeData.distance,
+              duration: path.duration,
+              cost: path.cost,
+              mode: 'transit'
+            }
+            if (!isAutoInit) {
+              console.log('路径信息更新:', routeInfo.value)
+            }
+          }
           
           // 更新地图中心
           if (isAutoInit) {
