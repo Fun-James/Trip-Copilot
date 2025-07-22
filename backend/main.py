@@ -10,6 +10,8 @@ import os
 import time
 import re
 import json
+import hashlib
+from functools import lru_cache
 from dotenv import load_dotenv
 from langchain_community.chat_models.tongyi import ChatTongyi
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -55,9 +57,21 @@ class ItineraryPlanResponse(BaseModel):
     plan_data: Optional[dict] = None
     error_message: Optional[str] = None
 
+# 新增行程更新数据模型
+class ItineraryUpdateRequest(BaseModel):
+    current_plan: dict  # 前端传递的当前完整行程规划JSON
+    modification_request: str  # 用户的修改指令，例如 "帮我把第一天的故宫去掉，换成颐和园"
+    chat_context: Optional[str] = None  # 可选的聊天上下文
+
+class ItineraryUpdateResponse(BaseModel):
+    success: bool
+    updated_plan: Optional[dict] = None
+    error_message: Optional[str] = None
+
 # 智能解析用户旅行请求的数据模型
 class QueryParseRequest(BaseModel):
     query: str
+    current_plan: Optional[dict] = None  # 当前行程计划，用于判断是否是修改行程的意图
 
 class QueryParseResponse(BaseModel):
     success: bool
@@ -107,39 +121,229 @@ async def health_check():
 # 注释：此API端点未被前端使用，已删除
 # @app.post("/api/trip/suggest", response_model=TripResponse)
 
+# 快速意图识别引擎（规则引擎）
+def quick_intent_detection(query: str, current_plan: dict = None) -> dict:
+    """
+    使用规则引擎快速判断用户意图，避免每次都调用大模型
+    返回格式: {"confident": bool, "result": dict}
+    """
+    query_lower = query.lower().strip()
+    
+    # 高置信度模式匹配
+    
+    # 1. 明确的新行程规划请求
+    new_plan_patterns = [
+        r'(我想|我要|帮我)(去|到)(.+?)(玩|旅游|旅行)(\d+)天',
+        r'(规划|安排|制定)(.+?)(\d+)天(的)?(行程|旅行)',
+        r'去(.+?)(\d+)天(的)?(行程|计划|旅游)',
+        r'(我想|想要|想去)(.+?)(玩|旅游|游玩)(\d+)天',
+        r'(\d+)天(.+?)(行程|旅游|旅行|游玩)',
+        r'(想|要)去(.+?)(玩|旅游|旅行|游览)(\d+)天?',
+        r'去(.+?)(\d+)天(旅游|游玩|玩)',  # 新增：去杭州3天旅游
+        r'到(.+?)(\d+)天(的)?(旅游|旅行|游玩)'
+    ]
+    
+    for pattern in new_plan_patterns:
+        match = re.search(pattern, query)
+        if match:
+            # 提取目的地和天数
+            destination = ""
+            duration = 3
+            
+            if '玩' in query or '旅游' in query or '旅行' in query:
+                # 尝试提取目的地和天数
+                dest_match = re.search(r'(去|到)(.+?)(玩|旅游|旅行)', query)
+                if dest_match:
+                    destination = dest_match.group(2).strip()
+                
+                day_match = re.search(r'(\d+)天', query)
+                if day_match:
+                    duration = int(day_match.group(1))
+            
+            return {
+                "confident": True,
+                "result": {
+                    "is_plan": True,
+                    "is_modification": False,
+                    "destination": destination,
+                    "duration": duration,
+                    "start_point": None,
+                    "intent_confidence": 0.9,
+                    "intent_type": "new_plan",
+                    "needs_confirmation": False
+                }
+            }
+    
+    # 2. 明确的行程修改请求（仅在有当前行程时）
+    if current_plan and current_plan.get("itinerary"):
+        modification_patterns = [
+            r'(修改|更改|调整|变更)(第\d+天|行程)',
+            r'(删除|去掉|移除|取消)(.+?)',
+            r'(添加|增加|加上|新增)(.+?)',
+            r'把(.+?)(换成|替换为|改为)(.+?)',
+            r'(第\d+天)(不去|改成|换成)(.+?)',
+            r'(重新)(规划|安排)(行程|第\d+天)'
+        ]
+        
+        # 提取当前行程中的景点名称
+        attraction_names = []
+        if isinstance(current_plan.get("itinerary"), list):
+            for day in current_plan["itinerary"]:
+                if isinstance(day.get("places"), list):
+                    for place in day["places"]:
+                        if place.get("name"):
+                            attraction_names.append(place["name"])
+        
+        for pattern in modification_patterns:
+            if re.search(pattern, query):
+                return {
+                    "confident": True,
+                    "result": {
+                        "is_plan": False,
+                        "is_modification": True,
+                        "destination": None,
+                        "duration": current_plan.get("total_days", 3),
+                        "start_point": None,
+                        "intent_confidence": 0.9,
+                        "intent_type": "modify",
+                        "needs_confirmation": False
+                    }
+                }
+        
+        # 检查是否提到了当前行程中的景点
+        mentioned_attractions = [name for name in attraction_names if name in query]
+        if mentioned_attractions and any(word in query_lower for word in ['修改', '调整', '换', '改', '删除', '去掉']):
+            return {
+                "confident": True,
+                "result": {
+                    "is_plan": False,
+                    "is_modification": True,
+                    "destination": None,
+                    "duration": current_plan.get("total_days", 3),
+                    "start_point": None,
+                    "intent_confidence": 0.85,
+                    "intent_type": "modify",
+                    "needs_confirmation": False
+                }
+            }
+    
+    # 3. 明确的信息查询/聊天请求
+    chat_patterns = [
+        r'^(你好|hello|hi)$',
+        r'(什么是|介绍一下|告诉我)(.+?)',
+        r'(.+?)(有什么|怎么样|好玩吗|特色|著名)',
+        r'^(请问|能告诉我|我想知道|想了解)',
+        r'(推荐|建议)(一些|几个)?(.+?)',
+        r'(谢谢|感谢|不用了|算了|再见)'
+    ]
+    
+    for pattern in chat_patterns:
+        if re.search(pattern, query):
+            return {
+                "confident": True,
+                "result": {
+                    "is_plan": False,
+                    "is_modification": False,
+                    "destination": None,
+                    "duration": 3,
+                    "start_point": None,
+                    "intent_confidence": 0.9,
+                    "intent_type": "chat",
+                    "needs_confirmation": False
+                }
+            }
+    
+    # 4. 不确定的情况
+    return {"confident": False, "result": None}
+
+# 缓存大模型结果
+@lru_cache(maxsize=100)
+def cached_llm_intent_detection(query_hash: str, current_plan_hash: str) -> dict:
+    """
+    缓存的大模型意图检测，使用哈希值作为键
+    """
+    # 这个函数的实际实现在下面的 parse_query_with_llm 中
+    pass
+
 @app.post("/api/trip/parse-query", response_model=QueryParseResponse)
 async def parse_query_with_llm(request: QueryParseRequest):
     """
-    使用大模型解析用户的旅行查询，提取出发地、目的地和天数。
+    使用混合策略解析用户查询：优先使用快速规则引擎，复杂情况才使用大模型
     """
     try:
+        # 1. 首先尝试快速规则引擎
+        quick_result = quick_intent_detection(request.query, request.current_plan)
+        
+        if quick_result["confident"]:
+            # 规则引擎有信心，直接返回结果
+            print(f"[快速识别] 查询: {request.query[:50]}... -> {quick_result['result']['intent_type']}")
+            return QueryParseResponse(success=True, data=quick_result["result"])
+        
+        # 2. 规则引擎不确定，使用大模型（但简化输入）
+        print(f"[大模型识别] 查询: {request.query[:50]}...")
+        
+        # 生成缓存键
+        query_hash = hashlib.md5(request.query.encode()).hexdigest()
+        plan_hash = "none"
+        if request.current_plan:
+            # 只使用行程的关键信息生成哈希，而不是完整数据
+            plan_summary = {
+                "destination": request.current_plan.get("destination", ""),
+                "total_days": request.current_plan.get("total_days", 0),
+                "attraction_names": []
+            }
+            if request.current_plan.get("itinerary"):
+                for day in request.current_plan["itinerary"]:
+                    if day.get("places"):
+                        for place in day["places"]:
+                            if place.get("name"):
+                                plan_summary["attraction_names"].append(place["name"])
+            plan_hash = hashlib.md5(json.dumps(plan_summary, sort_keys=True).encode()).hexdigest()
+        
+        cache_key = f"{query_hash}_{plan_hash}"
+        
+        # 3. 简化的大模型调用
         llm = get_tongyi_client()
 
-        prompt = f"""
-        请从以下用户查询中提取旅行相关信息：
+        # 构建简化的上下文（只包含景点名称，不包含完整行程数据）
+        current_attractions = []
+        if request.current_plan and request.current_plan.get("itinerary"):
+            for day in request.current_plan["itinerary"]:
+                if day.get("places"):
+                    for place in day["places"]:
+                        if place.get("name"):
+                            current_attractions.append(place["name"])
+        
+        attractions_context = ""
+        if current_attractions:
+            attractions_context = f"用户当前行程包含的景点: {', '.join(current_attractions[:10])}"  # 最多10个景点
 
-        用户查询: "{request.query}"
+        # 大幅简化的提示词
+        prompt = f"""分析用户查询并判断意图，返回JSON格式。
 
-        你需要提取以下信息：
-        1. "is_plan": 判断是否是行程规划请求 (如果用户希望你为他规划出游计划或明确表达出想去某个地方进行为期若干天的旅行，则为 true，否则为 false)
-        2. "start_point": 出发地点 (如果没有提到，则为 null)
-        3. "destination": 目的地 (必须有)
-        4. "duration": 旅行天数 (如果没有提到，则默认为 3)
+查询: "{request.query}"
+{attractions_context}
 
-        请严格按照以下JSON格式返回，不要包含任何额外的解释性文字：
-        {{
-          "is_plan": "...",
-          "start_point": "...",
-          "destination": "...",
-          "duration": ...
-        }}
-        """
+判断规则:
+- 新规划: 包含"去xxx玩x天"、"规划行程"等
+- 修改行程: 包含"修改"、"调整"、"删除"、"添加"或提到当前景点名称
+- 普通聊天: 询问信息、问候、推荐等
+
+返回JSON (不要其他文字):
+{{
+  "is_plan": true/false,
+  "is_modification": true/false,
+  "destination": "目的地或null",
+  "duration": 天数或3,
+  "intent_confidence": 0到1的数字
+}}"""
 
         messages = [
-            SystemMessage(content="你是一个专门用于提取旅行信息的助手。"),
+            SystemMessage(content="你是意图识别助手，只返回JSON，不要解释。"),
             HumanMessage(content=prompt)
         ]
 
+        # 使用较短的超时时间
         response = llm.invoke(messages)
 
         ai_content = response.content
@@ -155,22 +359,72 @@ async def parse_query_with_llm(request: QueryParseRequest):
         # 提取JSON部分
         json_match = re.search(r'\{.*\}', str(ai_content), re.DOTALL)
         if not json_match:
-            raise ValueError("AI返回的内容不包含有效的JSON格式")
+            # 大模型解析失败，使用保守的默认值
+            return QueryParseResponse(
+                success=True, 
+                data={
+                    "is_plan": False,
+                    "is_modification": False,
+                    "destination": None,
+                    "duration": 3,
+                    "start_point": None,
+                    "intent_confidence": 0.3,
+                    "intent_type": "chat",
+                    "needs_confirmation": True
+                }
+            )
 
         json_str = json_match.group()
         parsed_data = json.loads(json_str)
 
-        # 字段校验
-        if not parsed_data.get("destination"):
-            return QueryParseResponse(success=False, error_message="无法识别目的地")
-
+        # 标准化布尔值
+        if isinstance(parsed_data.get("is_plan"), str):
+            parsed_data["is_plan"] = parsed_data["is_plan"].lower() == "true"
+        if isinstance(parsed_data.get("is_modification"), str):
+            parsed_data["is_modification"] = parsed_data["is_modification"].lower() == "true"
+            
+        # 设置默认值
         if "duration" not in parsed_data or not isinstance(parsed_data["duration"], int):
-            parsed_data["duration"] = 3 # 默认值
+            parsed_data["duration"] = 3
+            
+        if "intent_confidence" not in parsed_data:
+            parsed_data["intent_confidence"] = 0.5
+        
+        # 设置意图类型
+        if parsed_data.get("is_plan"):
+            parsed_data["intent_type"] = "new_plan"
+        elif parsed_data.get("is_modification"):
+            parsed_data["intent_type"] = "modify"
+        else:
+            parsed_data["intent_type"] = "chat"
+            
+        # 置信度阈值
+        confidence_threshold = 0.6  # 降低阈值，减少确认次数
+        parsed_data["needs_confirmation"] = parsed_data.get("intent_confidence", 0) < confidence_threshold
+
+        # 如果是新规划但没有目的地，降低置信度
+        if parsed_data.get("is_plan") and not parsed_data.get("destination"):
+            parsed_data["intent_confidence"] = 0.3
+            parsed_data["needs_confirmation"] = True
 
         return QueryParseResponse(success=True, data=parsed_data)
 
     except Exception as e:
-        return QueryParseResponse(success=False, error_message=f"解析查询时出错: {str(e)}")
+        print(f"[错误] 意图识别失败: {str(e)}")
+        # 发生错误时返回保守的默认值
+        return QueryParseResponse(
+            success=True,  # 不返回错误，而是返回默认意图
+            data={
+                "is_plan": False,
+                "is_modification": False,
+                "destination": None,
+                "duration": 3,
+                "start_point": None,
+                "intent_confidence": 0.2,
+                "intent_type": "chat",
+                "needs_confirmation": True
+            }
+        )
 
 # 获取热门目的地（AI生成）
 # 注释：此API端点未被前端使用，已删除
@@ -189,7 +443,7 @@ def get_location_coordinates_poi(location: str, city: Optional[str] = None):
     """通过POI搜索获取旅游景点的精确坐标"""
     try:
         # 添加延迟避免QPS限制（免费版3次/秒）
-          # 等待400ms
+        time.sleep(0.4)  # 等待400ms，确保QPS不超过3次/秒
         
         api_key = get_amap_api_key()
         url = f"https://restapi.amap.com/v3/place/text"
@@ -265,7 +519,7 @@ def get_location_coordinates_geocode(location: str, city: Optional[str] = None):
     """通过地理编码获取地点坐标（备用方法）"""
     try:
         # 添加延迟避免QPS限制（免费版3次/秒）
-          # 等待400ms
+        time.sleep(0.4)  # 等待400ms，确保QPS不超过3次/秒
         
         api_key = get_amap_api_key()
         url = f"https://restapi.amap.com/v3/geocode/geo"
@@ -322,7 +576,7 @@ def get_route_planning(start_coords: tuple, end_coords: tuple, mode: str = "driv
     """获取两点间的路径规划"""
     try:
         # 添加延迟避免QPS限制（免费版3次/秒）
-          # 等待400ms
+        time.sleep(0.4)  # 等待400ms，确保QPS不超过3次/秒
         
         api_key = get_amap_api_key()
         origin = f"{start_coords[0]},{start_coords[1]}"
@@ -705,6 +959,53 @@ async def chat_with_ai_stream(request: ChatRequest):
 # 获取地点详细信息API
 # 注释：此API端点未被前端使用，已删除
 # @app.post("/api/location/info", response_model=LocationResponse)
+
+# 辅助函数：精简行程数据，减少LLM的输入大小
+def simplify_plan_for_llm(plan):
+    """
+    从行程计划中移除不必要的详细信息，以减少传递给LLM的数据量，避免超出最大输入长度限制
+    """
+    if not plan or not isinstance(plan, dict):
+        return plan
+    
+    simplified_plan = {
+        "destination": plan.get("destination", ""),
+        "total_days": plan.get("total_days", 0),
+        "itinerary": []
+    }
+    
+    # 复制行程数据，但排除路线详情和原始响应数据
+    if "itinerary" in plan and isinstance(plan["itinerary"], list):
+        for day in plan["itinerary"]:
+            simplified_day = {
+                "day": day.get("day", 0),
+                "theme": day.get("theme", ""),
+                "places": []
+            }
+            
+            # 只保留地点的基本信息
+            if "places" in day and isinstance(day["places"], list):
+                for place in day["places"]:
+                    simplified_place = {
+                        "name": place.get("name", ""),
+                        "description": place.get("description", ""),
+                        "duration": place.get("duration", 0)
+                    }
+                    # 可选保留坐标信息
+                    if "longitude" in place and "latitude" in place:
+                        simplified_place["longitude"] = place["longitude"]
+                        simplified_place["latitude"] = place["latitude"]
+                    
+                    # 不包含交通详情、路线步骤等信息
+                    simplified_day["places"].append(simplified_place)
+            
+            # 完全移除路线数据
+            if "routes" in day:
+                del day["routes"]
+            
+            simplified_plan["itinerary"].append(simplified_day)
+    
+    return simplified_plan
 
 # 行程规划API - 简单版本
 # 注释：此API端点未被前端使用，前端使用复杂版本 /api/trip/plan，已删除
@@ -1223,6 +1524,242 @@ async def get_trip_plan(request: FinePlanRequest):
         return ItineraryPlanResponse(
             success=False,
             error_message=f"服务器内部错误: {str(e)}"
+        )
+
+# 新增：行程更新API
+@app.post("/api/trip/update", response_model=ItineraryUpdateResponse)
+async def update_trip_plan(request: ItineraryUpdateRequest):
+    """根据用户的修改要求更新已有的行程规划"""
+    try:
+        llm = get_tongyi_client()
+
+        # 创建精简版行程数据，移除路径规划详情以减少输入大小
+        simplified_plan = simplify_plan_for_llm(request.current_plan)
+        
+        # 将精简后的行程JSON转换为字符串以便传递给LLM
+        current_plan_str = json.dumps(simplified_plan, ensure_ascii=False, indent=2)
+
+        prompt = f"""
+你是一个智能行程规划编辑助手。你的任务是根据用户的修改要求，更新一份已有的JSON格式的旅行计划。
+
+**当前行程规划 (JSON格式):**
+{current_plan_str}
+
+**用户的修改要求:**
+"{request.modification_request}"
+
+**你的任务:**
+1. 理解用户的修改要求（可能是增加、删除或替换某个地点）。
+2. 修改上面的JSON数据以反映这些变化。
+3. **严格要求**：返回一个完整的、经过修改的JSON对象。除了JSON本身，不要包含任何额外的解释、注释或道歉。其结构必须与原始JSON完全一致。
+4. 对于新增的地点，请按照"省市+具体地点名称"的格式，例如"四川省成都市武侯祠"。
+5. 保持每天的地点数量适中（3-4个），确保地理位置相对集中。
+6. 新增地点需要包含详细描述和建议停留时间。
+
+请严格按照以下JSON格式返回，不要包含任何额外的解释性文字：
+"""
+
+        messages = [
+            SystemMessage(content="你是一个JSON编辑专家，专门根据指令修改旅行计划。"),
+            HumanMessage(content=prompt)
+        ]
+
+        try:
+            # 检查请求大小，并打印调试信息
+            request_size = len(current_plan_str)
+            print(f"发送给LLM的请求大小: {request_size} 字符")
+            if request_size > 100000:
+                print("警告: 请求大小接近模型限制")
+
+            # 调用LLM
+            response = llm.invoke(messages)
+            
+            # 处理AI响应内容
+            ai_content = response.content
+            if isinstance(ai_content, list):
+                text_content = ""
+                for item in ai_content:
+                    if isinstance(item, dict) and "text" in item:
+                        text_content += item["text"]
+                    elif isinstance(item, str):
+                        text_content += item
+                ai_content = text_content
+
+            # 打印响应长度和前100个字符用于调试
+            content_length = len(str(ai_content))
+            print(f"AI响应长度: {content_length} 字符")
+            print(f"AI响应前100个字符: {str(ai_content)[:100]}")
+
+            # 提取JSON部分
+            json_match = re.search(r'\{.*\}', str(ai_content), re.DOTALL)
+            if not json_match:
+                raise ValueError("AI返回的内容不包含有效的JSON格式，可能是输入内容过长导致模型响应不完整")
+                
+        except Exception as e:
+            error_msg = f"处理AI响应失败: {str(e)}"
+            print(error_msg)
+            if hasattr(e, 'response') and hasattr(e.response, 'text'):
+                print(f"API错误详情: {e.response.text}")
+            raise ValueError(error_msg)
+
+        # 提取JSON并解析
+        json_str = json_match.group()
+        try:
+            updated_plan_data = json.loads(json_str)
+        except json.JSONDecodeError as je:
+            print(f"JSON解析失败: {str(je)}")
+            print(f"JSON内容: {json_str[:200]}...")
+            raise ValueError(f"无法解析返回的JSON: {str(je)}")
+
+        # 为更新后的行程中的每个地点重新获取坐标并计算交通信息
+        if "itinerary" in updated_plan_data:
+            for day_plan in updated_plan_data["itinerary"]:
+                if "places" in day_plan:
+                    # 第一步：为每个地点获取坐标
+                    valid_places = []
+                    for place in day_plan["places"]:
+                        if "name" in place:
+                            # 尝试从地点名称中提取城市信息
+                            place_name = place["name"]
+                            city_info = None
+                            
+                            # 从目的地中提取城市信息
+                            if updated_plan_data.get("destination"):
+                                destination = updated_plan_data["destination"]
+                                if "市" in destination:
+                                    city_parts = destination.split("市")
+                                    if len(city_parts) > 0:
+                                        city_info = city_parts[0] + "市"
+                                elif "省" in destination and len(destination) > 2:
+                                    city_info = destination
+                            
+                            lng, lat = get_location_coordinates(place_name, city_info)
+                            if lng is not None and lat is not None:
+                                try:
+                                    place["longitude"] = float(lng)
+                                    place["latitude"] = float(lat)
+                                    # 验证坐标范围
+                                    if (-180 <= place["longitude"] <= 180 and -90 <= place["latitude"] <= 90):
+                                        valid_places.append(place)
+                                    else:
+                                        print(f"警告：地点 '{place['name']}' 坐标超出有效范围: ({lng}, {lat})")
+                                        place["longitude"] = None
+                                        place["latitude"] = None
+                                        valid_places.append(place)  # 仍然保留，但坐标为空
+                                except (ValueError, TypeError):
+                                    print(f"警告：地点 '{place['name']}' 坐标转换失败: ({lng}, {lat})")
+                                    place["longitude"] = None
+                                    place["latitude"] = None
+                                    valid_places.append(place)  # 仍然保留，但坐标为空
+                            else:
+                                place["longitude"] = None
+                                place["latitude"] = None
+                                valid_places.append(place)  # 仍然保留，但坐标为空
+                                print(f"警告：无法获取地点 '{place['name']}' 的坐标")
+                    
+                    # 更新places列表
+                    day_plan["places"] = valid_places
+                    
+                    # 第二步：为相邻地点生成路径规划数据
+                    day_plan["routes"] = []
+                    valid_coord_places = [p for p in valid_places if p.get("longitude") and p.get("latitude")]
+                    
+                    if len(valid_coord_places) >= 2:
+                        print(f"第{day_plan['day']}天开始生成 {len(valid_coord_places)-1} 条路径...")
+                        for i in range(len(valid_coord_places) - 1):
+                            start_place = valid_coord_places[i]
+                            end_place = valid_coord_places[i + 1]
+                            
+                            try:
+                                route_data = get_route_planning(
+                                    (start_place["longitude"], start_place["latitude"]),
+                                    (end_place["longitude"], end_place["latitude"]),
+                                    "driving"  # 默认使用驾车模式
+                                )
+                                
+                                if route_data and route_data.get("status") == "1":
+                                    route_info = {
+                                        "start_point": {
+                                            "name": start_place["name"],
+                                            "longitude": start_place["longitude"],
+                                            "latitude": start_place["latitude"]
+                                        },
+                                        "end_point": {
+                                            "name": end_place["name"],
+                                            "longitude": end_place["longitude"],
+                                            "latitude": end_place["latitude"]
+                                        },
+                                        "mode": "driving",
+                                        "route_info": route_data.get("route", {}),
+                                        "raw_data": route_data,
+                                        "sequence": i + 1
+                                    }
+                                    day_plan["routes"].append(route_info)
+                                    print(f"✓ 成功生成路径 {i+1}/{len(valid_coord_places)-1}：{start_place['name']} -> {end_place['name']}")
+                                else:
+                                    print(f"✗ 无法生成路径 {i+1}/{len(valid_coord_places)-1}：{start_place['name']} -> {end_place['name']}")
+                            except Exception as e:
+                                print(f"✗ 生成路径时出错 {i+1}/{len(valid_coord_places)-1}：{start_place['name']} -> {end_place['name']}, 错误: {e}")
+                    
+                    print(f"第{day_plan['day']}天：有效地点 {len(valid_places)} 个，有坐标地点 {len(valid_coord_places)} 个，成功生成路径 {len(day_plan['routes'])} 条")
+
+        # 第三步：计算交通时间和推荐交通方式（复用原有逻辑）
+        if "itinerary" in updated_plan_data:
+            for day_plan in updated_plan_data["itinerary"]:
+                if "places" in day_plan:
+                    valid_places = [p for p in day_plan["places"] if p.get("longitude") and p.get("latitude")]
+                    
+                    if len(valid_places) >= 2:
+                        for i in range(len(valid_places) - 1):
+                            start = valid_places[i]
+                            end = valid_places[i + 1]
+                            
+                            # 计算直线距离（公里）
+                            distance_km = geodesic(
+                                (start["latitude"], start["longitude"]),
+                                (end["latitude"], end["longitude"])
+                            ).kilometers
+                            
+                            # 获取交通方式信息
+                            transportation_info = recommend_transportation(
+                                start["longitude"], start["latitude"],
+                                end["longitude"], end["latitude"],
+                                distance_km
+                            )
+                            
+                            # 更新到起点地点
+                            start["transportation"] = transportation_info["default_mode"]
+                            start["available_transportations"] = transportation_info["available_modes"]
+
+                            # 计算交通时间和路线
+                            transit_info = get_transit_time(
+                                start["longitude"], start["latitude"],
+                                end["longitude"], end["latitude"],
+                                mode=start["transportation"]
+                            )
+
+                            start["transition_time"] = transit_info["time"]
+                            start["route_steps"] = transit_info["steps"]
+
+        return ItineraryUpdateResponse(
+            success=True,
+            updated_plan=updated_plan_data
+        )
+
+    except json.JSONDecodeError as je:
+        return ItineraryUpdateResponse(
+            success=False,
+            error_message=f"解析AI返回的JSON数据失败: {str(je)}"
+        )
+    except ValueError as ve:
+        return ItineraryUpdateResponse(
+            success=False,
+            error_message=str(ve)
+        )
+    except Exception as e:
+        return ItineraryUpdateResponse(
+            success=False,
+            error_message=f"更新行程时发生错误: {str(e)}"
         )
 
 # 新增交通方式切换API
