@@ -25,21 +25,47 @@
             v-for="chat in chatHistory" 
             :key="chat.id"
             :class="['history-item', { active: currentChatId === chat.id }]"
-            @click="loadChat(chat.id)"
+            @click="editingChatId !== chat.id ? loadChat(chat.id) : null"
           >
             <div class="history-item-content">
-              <div class="history-item-title">{{ chat.title }}</div>
+              <!-- 对话标题显示或编辑 -->
+              <div v-if="editingChatId !== chat.id" class="history-item-title">
+                {{ chat.title }}
+              </div>
+              <el-input
+                v-else
+                v-model="editingChatTitle"
+                @blur="saveRename(chat.id)"
+                @keyup.enter="saveRename(chat.id)"
+                @keyup.esc="cancelRename"
+                @click.stop
+                class="rename-input"
+                size="small"
+                ref="renameInputRef"
+              />
               <div class="history-item-time">{{ formatDate(chat.lastUpdated) }}</div>
             </div>
-            <el-button 
-              class="delete-chat-btn" 
-              type="text" 
-              size="small"
-              @click.stop="deleteChat(chat.id)"
-              title="删除对话"
-            >
-              ×
-            </el-button>
+            <div class="history-item-actions">
+              <el-button 
+                class="rename-chat-btn" 
+                type="text" 
+                size="small"
+                @click.stop="startRename(chat.id, chat.title)"
+                title="重命名对话"
+                v-if="editingChatId !== chat.id"
+              >
+                <el-icon><Edit /></el-icon>
+              </el-button>
+              <el-button 
+                class="delete-chat-btn" 
+                type="text" 
+                size="small"
+                @click.stop="deleteChat(chat.id)"
+                title="删除对话"
+              >
+                <el-icon><CloseBold /></el-icon>
+              </el-button>
+            </div>
           </div>
           
           <div v-if="chatHistory.length === 0" class="no-history">
@@ -487,6 +513,11 @@ export default {
     const messages = ref([])
     const loading = ref(false)
     
+    // 重命名相关的响应式数据
+    const editingChatId = ref(null)
+    const editingChatTitle = ref('')
+    const renameInputRef = ref(null)
+    
     // 在组件挂载时加载聊天历史和获取用户位置
     onMounted(() => {
       loadChatHistory()
@@ -880,6 +911,51 @@ export default {
         // 从历史记录中移除
         chatHistory.value.splice(chatIndex, 1)
         saveChatHistory()
+      }
+    }
+
+    // 开始重命名对话
+    const startRename = (chatId, currentTitle) => {
+      editingChatId.value = chatId
+      editingChatTitle.value = currentTitle
+      
+      // 在下一个tick聚焦输入框
+      nextTick(() => {
+        if (renameInputRef.value) {
+          renameInputRef.value.focus()
+          renameInputRef.value.select()
+        }
+      })
+    }
+
+    // 保存重命名
+    const saveRename = (chatId) => {
+      // 如果输入为空，则撤销重命名（静默模式，不显示消息）
+      if (editingChatTitle.value.trim() === '') {
+        cancelRename(true) // 静默取消
+        return
+      }
+
+      const chatIndex = chatHistory.value.findIndex(c => c.id === chatId)
+      if (chatIndex !== -1) {
+        chatHistory.value[chatIndex].title = editingChatTitle.value.trim()
+        saveChatHistory()
+        ElMessage.success('对话重命名成功')
+      }
+      
+      // 清除编辑状态
+      editingChatId.value = null
+      editingChatTitle.value = ''
+    }
+
+    // 取消重命名
+    const cancelRename = (silent = false) => {
+      editingChatId.value = null
+      editingChatTitle.value = ''
+      
+      // 如果不是静默模式，显示取消提示
+      if (!silent) {
+        ElMessage.info('已取消重命名')
       }
     }
 
@@ -1993,6 +2069,13 @@ export default {
       startNewChat,
       loadChat,
       deleteChat,
+      // 重命名相关
+      editingChatId,
+      editingChatTitle,
+      renameInputRef,
+      startRename,
+      saveRename,
+      cancelRename,
       refreshMap,
       reinitializeMapRoute,
       // 图标组件
@@ -2231,6 +2314,18 @@ export default {
   min-width: 0;
 }
 
+.history-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.history-item:hover .history-item-actions {
+  opacity: 1;
+}
+
 .history-item-title {
   color: #202124;
   font-size: 14px;
@@ -2246,8 +2341,8 @@ export default {
   font-size: 12px;
 }
 
+.rename-chat-btn,
 .delete-chat-btn {
-  opacity: 0;
   padding: 4px;
   min-height: auto;
   width: 24px;
@@ -2258,10 +2353,14 @@ export default {
   transition: all 0.3s;
   color: #5f6368;
   flex-shrink: 0;
-  font-size: 16px;
-  font-weight: bold;
   border: none;
   background: none;
+}
+
+.rename-chat-btn:hover {
+  color: #1a73e8;
+  background-color: #e8f0fe;
+  border-radius: 4px;
 }
 
 .delete-chat-btn:hover {
@@ -2270,8 +2369,15 @@ export default {
   border-radius: 4px;
 }
 
-.history-item:hover .delete-chat-btn {
-  opacity: 1;
+.rename-input {
+  margin-bottom: 4px;
+}
+
+.rename-input :deep(.el-input__wrapper) {
+  border-radius: 4px;
+  border: 1px solid #1a73e8;
+  box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
+  background-color: #ffffff;
 }
 
 .no-history {
