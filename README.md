@@ -5,6 +5,10 @@
 
 Trip Copilot 是一款现代化的智能旅行助手，采用前后端分离架构，前端基于 Vue 3 + Element Plus，后端基于 FastAPI。支持智能行程建议、热门目的地推荐、天气展示等功能，适合个人及团队旅行规划。
 
+
+https://github.com/user-attachments/assets/35b9f749-642b-4862-a149-cf332f799ea9
+
+
 ---
 
 ## 项目亮点
